@@ -11,8 +11,6 @@ const AdminLogin = () => (
     identifierType="email"
     invalidMessage="Invalid Email Address or Password"
     missingIdentifierMessage="Enter your email address first, then request a password reset."
-    buttonColor="#dc2626"
-    showRememberMe={false}
     normalizeIdentifier={(value) => value.trim().toLowerCase()}
   />
 );

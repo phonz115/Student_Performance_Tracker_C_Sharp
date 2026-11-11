@@ -11,7 +11,6 @@ const StudentLogin = () => (
     identifierType="text"
     invalidMessage="Invalid ID Number or Password"
     missingIdentifierMessage="Enter your ID number first, then request a password reset."
-    registerPath="/register?role=student"
   />
 );
 

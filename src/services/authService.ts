@@ -1,4 +1,4 @@
-import type { AppUser, LoginPayload, MessageResponse, PasswordResetPayload, RegistrationPayload } from '../types';
+import type { AppUser, LoginPayload, MessageResponse, PasswordResetPayload } from '../types';
 import { apiPost, apiRequest } from './apiClient';
 
 type LogoutResponse = {
@@ -9,10 +9,6 @@ export const getSession = () => apiRequest<AppUser>('/session');
 
 export const loginUser = (loginData: LoginPayload) => {
   return apiPost<AppUser, LoginPayload>('/login', loginData);
-};
-
-export const registerUser = (registrationData: RegistrationPayload) => {
-  return apiPost<AppUser, RegistrationPayload>('/register', registrationData);
 };
 
 export const requestPasswordReset = (resetData: PasswordResetPayload) => {

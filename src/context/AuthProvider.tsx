@@ -1,11 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { createGrade, getGrades, updateGrade } from '../services/gradeService';
-import { getUsers, updateProfilePicture as updateProfilePictureService } from '../services/userService';
-import { getSession, loginUser, logoutUser, registerUser, requestPasswordReset as requestPasswordResetService } from '../services/authService';
+import { createGrade, deleteGrade as deleteGradeService, getGrades, updateGrade } from '../services/gradeService';
+import { getUsers } from '../services/userService';
+import { getSession, loginUser, logoutUser, requestPasswordReset as requestPasswordResetService } from '../services/authService';
 import { getTeacherAssignments } from '../services/adminService';
-import type { AppUser, ClassAnalytics, Grade, GradePayload, GradeUpdatePayload, RegistrationPayload, TeacherAssignment, UserRole } from '../types';
+import type { AppUser, Grade, GradePayload, GradeUpdatePayload, TeacherAssignment, UserRole } from '../types';
 import { AuthContext } from './authContext';
-import { apiRequest } from '../services/apiClient';
 
 type AuthProviderProps = {
   children: ReactNode;
@@ -24,7 +23,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [teacherAssignments, setTeacherAssignments] = useState<TeacherAssignment[]>([]);
-  const [classAnalytics, setClassAnalytics] = useState<ClassAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -36,27 +34,21 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const sessionUser = await getSession();
       setUser(sessionUser);
 
-      const analyticsRequest = sessionUser.role === 'student'
-        ? Promise.resolve(null)
-        : apiRequest<ClassAnalytics>('/analytics/class').catch(() => null);
-      const [usersData, gradesData, assignmentData, analyticsData] = await Promise.all([
+      const [usersData, gradesData, assignmentData] = await Promise.all([
         getUsers(),
         getGrades(),
         getTeacherAssignments().catch(() => []),
-        analyticsRequest,
       ]);
 
       setUsers(usersData);
       setGrades(gradesData);
       setTeacherAssignments(assignmentData);
-      setClassAnalytics(analyticsData);
     } catch (err) {
       setError(isUnauthorizedSession(err) ? '' : getErrorMessage(err, 'Unable to connect to the server'));
       setUser(null);
       setUsers([]);
       setGrades([]);
       setTeacherAssignments([]);
-      setClassAnalytics(null);
     } finally {
       setLoading(false);
     }
@@ -66,9 +58,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     loadAppData();
   }, []);
 
-  const login = async (identifier: string, password: string, role: UserRole, rememberMe = false) => {
+  const login = async (identifier: string, password: string, role: UserRole) => {
     try {
-      const loggedInUser = await loginUser({ identifier, password, role, rememberMe });
+      const loggedInUser = await loginUser({ identifier, password, role });
       setUser(loggedInUser);
       await loadAppData();
       return true;
@@ -90,23 +82,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     return savedGrade;
   };
 
-  const register = async (registrationData: RegistrationPayload) => {
-    const responseData = await registerUser(registrationData);
-    setUsers((currentUsers) => [...currentUsers, responseData]);
-    return responseData;
+  const deleteGrade = async (gradeId: number) => {
+    await deleteGradeService(gradeId);
+    setGrades((currentGrades) => currentGrades.filter((grade) => grade.id !== gradeId));
   };
 
   const requestPasswordReset = async (identifier: string, role: UserRole) => {
     return requestPasswordResetService({ identifier, role });
-  };
-
-  const updateProfilePicture = async (profilePicture: string) => {
-    const updatedUser = await updateProfilePictureService(profilePicture);
-
-    setUser(updatedUser);
-    setUsers((currentUsers) => currentUsers.map((currentUser) => (currentUser.id === updatedUser.id ? updatedUser : currentUser)));
-
-    return updatedUser;
   };
 
   const logout = () => {
@@ -120,7 +102,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   return (
     <AuthContext.Provider
-      value={{ user, users, grades, teacherAssignments, classAnalytics, loading, error, login, logout, addGrade, editGrade, register, requestPasswordReset, updateProfilePicture, reloadData: loadAppData }}
+      value={{ user, users, grades, teacherAssignments, loading, error, login, logout, addGrade, editGrade, deleteGrade, requestPasswordReset, reloadData: loadAppData }}
     >
       {children}
     </AuthContext.Provider>

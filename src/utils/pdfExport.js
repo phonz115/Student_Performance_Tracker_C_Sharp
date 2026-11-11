@@ -68,7 +68,7 @@ export const exportStructuredPdf = ({
   doc.setProperties({ title });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
-  doc.setTextColor(6, 39, 73);
+  doc.setTextColor(49, 93, 155);
   doc.text(title, margin, y);
   y += 8;
 
@@ -112,7 +112,7 @@ export const exportStructuredPdf = ({
       doc.setTextColor(95, 105, 117);
       doc.text(String(item.label).toUpperCase(), x + 4, cardY + 7);
       doc.setFontSize(13);
-      doc.setTextColor(6, 39, 73);
+      doc.setTextColor(49, 93, 155);
       doc.text(toText(item.value), x + 4, cardY + 16);
     });
     y += Math.ceil(summary.length / cardCount) * (cardHeight + gap) + 4;
@@ -141,7 +141,7 @@ export const exportStructuredPdf = ({
       }
 
       ensureSpace(headerHeight);
-      doc.setFillColor(6, 39, 73);
+      doc.setFillColor(49, 93, 155);
       doc.rect(margin, y, usableWidth, headerHeight, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);

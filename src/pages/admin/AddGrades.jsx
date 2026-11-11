@@ -1,664 +1,599 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useStatusToast } from '../../hooks/useNotifications';
-import { CenteredStatusCard, LoadingSpinner, StatusMessage } from '../../components/ui';
-import UserAvatar from '../../components/UserAvatar';
+import { useNotifications } from '../../hooks/useNotifications';
 import { getCourses } from '../../services/adminService';
 import './AddGrades.css';
 
-const activities = [
-  { id: 'quiz1', label: 'Quiz 1', max: 20 },
-  { id: 'quiz2', label: 'Quiz 2', max: 20 },
-  { id: 'assignment', label: 'Assignment', max: 20 },
-  { id: 'midterm', label: 'Midterm Exam', max: 50 },
-  { id: 'final', label: 'Final Exam', max: 100 },
+const GRADE_TERMS = [
+  { key: 'prelim', label: 'Prelim' },
+  { key: 'midterm', label: 'Midterm' },
+  { key: 'finals', label: 'Finals' },
 ];
 
-const fallbackRows = [
-  { id: '2024-0015', name: 'Alessa Arong', quiz: 90, assignment: 95, midterm: 95, final: 96, total: '94.0', grade: 'A' },
-  { id: '2024-0016', name: 'Annie Mamitag', quiz: 88, assignment: 92, midterm: 90, final: 94, total: '91.0', grade: 'A-' },
-  { id: '2024-0017', name: 'Juffiea Visitacion', quiz: 70, assignment: 75, midterm: 72, final: 72, total: '72.2', grade: 'C' },
-];
-
-const getLetterGrade = (score) => {
-  if (score >= 93) return 'A';
-  if (score >= 90) return 'A-';
-  if (score >= 87) return 'B+';
-  if (score >= 83) return 'B';
-  if (score >= 80) return 'B-';
-  if (score >= 75) return 'C';
-  return 'F';
+const getGradeTermKey = (term) => {
+  const normalizedTerm = String(term || '').trim().toLowerCase();
+  if (normalizedTerm.startsWith('prelim')) return 'prelim';
+  if (normalizedTerm.includes('midterm')) return 'midterm';
+  if (normalizedTerm.startsWith('final')) return 'finals';
+  return null;
+};
+const getGradePeriodLabel = (period) => {
+  const normalizedPeriod = String(period || '').trim().toLowerCase();
+  if (normalizedPeriod.startsWith('prelim')) return 'Prelim';
+  if (normalizedPeriod.includes('midterm')) return 'Midterm';
+  if (normalizedPeriod.startsWith('final')) return 'Finals';
+  return period || 'Prelim';
 };
 
-const getErrorText = (error, fallback) => {
-  return error instanceof Error && error.message ? error.message : fallback;
+const getTeacherClassKey = (assignment) => getTeacherClassLabel(assignment).replace(/\s+/g, ' ').trim().toLowerCase();
+const getTeacherClassLabel = (assignment) => (
+  [assignment.subject, assignment.section || assignment.course].filter(Boolean).join(' · ') || 'Unassigned class'
+);
+
+const emptyForm = {
+  studentId: '',
+  subject: '',
+  score: '',
+  feedback: '',
+  schoolYear: '2025-2026',
+  semester: '1st Semester',
+  term: 'Prelim',
 };
 
-const valuesMatch = (left, right) => {
-  return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
-};
-
-const assignmentMatchesSubject = (assignment, subjectName) => {
-  if (!subjectName) {
-    return true;
-  }
-
-  return [assignment.subject, assignment.course, assignment.section].some((value) => valuesMatch(value, subjectName));
-};
+const formatGradeValue = (grade) => Number(grade.score).toFixed(1) + (grade.teacherId ? '' : ' / 100');
 
 const AddGrades = () => {
-  const { user, users, grades, addGrade, classAnalytics, teacherAssignments } = useAuth();
-  const students = users.filter((user) => user.role === 'student');
-  const fileInputRef = useRef(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedStudentId, setSelectedStudentId] = useState(students[0]?.id || '');
-  const [subject, setSubject] = useState('');
+  const { user, users, grades, teacherAssignments, addGrade, editGrade, deleteGrade } = useAuth();
+  const { success, error } = useNotifications();
+  const students = useMemo(() => users.filter((account) => account.role === 'student'), [users]);
   const [courses, setCourses] = useState([]);
-  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState('');
-  const [selectedClassFilter, setSelectedClassFilter] = useState('');
-  const [schoolYear, setSchoolYear] = useState('2025-2026');
-  const [semester, setSemester] = useState('1st Semester');
-  const [term, setTerm] = useState('Prelim');
-  const [scores, setScores] = useState({
-    quiz1: '18',
-    quiz2: '',
-    assignment: '20',
-    midterm: '',
-    final: '',
-  });
+  const [search, setSearch] = useState('');
+  const [classFilter, setClassFilter] = useState('All');
+  const [isClassMenuOpen, setIsClassMenuOpen] = useState(false);
+  const classFilterContainerRef = useRef(null);
+  const classFilterTriggerRef = useRef(null);
+  const classOptionRefs = useRef([]);
+  const [semesterFilter, setSemesterFilter] = useState('All');
+  const [schoolYearFilter, setSchoolYearFilter] = useState('All');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingGrade, setEditingGrade] = useState(null);
+  const [form, setForm] = useState(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
-  useStatusToast(successMessage, 'success', 'Grades updated');
-  useStatusToast(errorMessage, 'error', 'Grades issue');
+  const usesCollegeGradeScale = user.role === 'teacher' || Boolean(editingGrade?.teacherId);
 
   useEffect(() => {
     getCourses()
       .then(setCourses)
-      .catch(() => {
-        setCourses([]);
-      });
+      .catch(() => setCourses([]));
   }, []);
 
-  const courseOptions = useMemo(() => {
-    const teacherSubjects = new Set(
-      teacherAssignments
-        .filter((assignment) => !user || user.role !== 'teacher' || assignment.teacherId === user.id)
-        .map((assignment) => assignment.subject)
-        .filter(Boolean)
-    );
-    const visibleCourses = user?.role === 'teacher'
-      ? courses.filter((course) => course.teacherId === user.id || teacherSubjects.has(course.name))
+  useEffect(() => {
+    if (!isClassMenuOpen) return undefined;
+
+    const closeOnPointerDown = (event) => {
+      if (!classFilterContainerRef.current?.contains(event.target)) setIsClassMenuOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsClassMenuOpen(false);
+        classFilterTriggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', closeOnPointerDown);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointerDown);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isClassMenuOpen]);
+
+  const subjectOptions = useMemo(() => {
+    const assignedSubjects = teacherAssignments
+      .filter((assignment) => user.role !== 'teacher' || assignment.teacherId === user.id)
+      .map((assignment) => assignment.subject)
+      .filter(Boolean);
+    const availableCourses = user.role === 'teacher'
+      ? courses.filter((course) => course.teacherId === user.id || assignedSubjects.includes(course.name))
       : courses;
-    const courseMap = new Map();
 
-    visibleCourses.forEach((course) => {
-      if (course.name) {
-        courseMap.set(course.name, course);
-      }
-    });
+    return Array.from(new Set([...availableCourses.map((course) => course.name), ...assignedSubjects])).sort((a, b) => a.localeCompare(b));
+  }, [courses, teacherAssignments, user.id, user.role]);
 
-    teacherSubjects.forEach((subjectName) => {
-      if (!courseMap.has(subjectName)) {
-        courseMap.set(subjectName, { id: subjectName, name: subjectName, code: '' });
-      }
-    });
+  const teacherAssignedRows = useMemo(() => new Set(
+    teacherAssignments
+      .filter((assignment) => assignment.teacherId === user.id)
+      .map((assignment) => `${String(assignment.studentId)}|${assignment.subject}`),
+  ), [teacherAssignments, user.id]);
 
-    return Array.from(courseMap.values()).sort((firstCourse, secondCourse) => firstCourse.name.localeCompare(secondCourse.name));
-  }, [courses, teacherAssignments, user]);
+  const teacherClassOptions = useMemo(() => {
+    const options = new Map();
+    teacherAssignments
+      .filter((assignment) => assignment.teacherId === user.id)
+      .forEach((assignment) => {
+        const key = getTeacherClassKey(assignment);
+        if (!options.has(key)) options.set(key, { key, label: getTeacherClassLabel(assignment) });
+      });
+
+    return [...options.values()].sort((left, right) => left.label.localeCompare(right.label));
+  }, [teacherAssignments, user.id]);
+
+  const selectedTeacherClassLabel = classFilter === 'All'
+    ? 'All my classes'
+    : teacherClassOptions.find((classOption) => classOption.key === classFilter)?.label || 'All my classes';
+
+  const selectTeacherClass = (value) => {
+    setClassFilter(value);
+    setIsClassMenuOpen(false);
+    classFilterTriggerRef.current?.focus();
+  };
+
+  const handleClassOptionKeyDown = (event, currentIndex) => {
+    const optionCount = teacherClassOptions.length + 1;
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+
+    event.preventDefault();
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    const nextIndex = (currentIndex + direction + optionCount) % optionCount;
+    classOptionRefs.current[nextIndex]?.focus();
+  };
 
   const availableStudents = useMemo(() => {
-    if (user?.role !== 'teacher') {
-      return students;
-    }
+    if (user.role !== 'teacher') return students;
 
-    return students.filter((student) => (
-      teacherAssignments.some((assignment) => (
-        assignment.teacherId === user.id
-        && valuesMatch(assignment.studentId, student.id)
-        && assignmentMatchesSubject(assignment, subject)
+    return students.filter((student) => teacherAssignments.some((assignment) => (
+      assignment.teacherId === user.id
+      && String(assignment.studentId) === String(student.id)
+      && (!form.subject || assignment.subject === form.subject || assignment.course === form.subject || assignment.section === form.subject)
+    )));
+  }, [form.subject, students, teacherAssignments, user.id, user.role]);
+
+  const schoolYears = useMemo(() => {
+    const gradeYears = grades
+      .filter((grade) => (
+        user.role !== 'teacher'
+        || grade.teacherId === user.id
+        || teacherAssignedRows.has(`${String(grade.studentId)}|${grade.subject}`)
       ))
-    ));
-  }, [students, subject, teacherAssignments, user]);
-
-  useEffect(() => {
-    if (courseOptions.length === 0) {
-      setSubject('');
-      setSelectedSubjectFilter('');
-      return;
-    }
-
-    if (!courseOptions.some((course) => course.name === subject)) {
-      setSubject(courseOptions[0].name);
-    }
-
-    if (selectedSubjectFilter && !courseOptions.some((course) => course.name === selectedSubjectFilter)) {
-      setSelectedSubjectFilter('');
-    }
-  }, [courseOptions, selectedSubjectFilter, subject]);
-
-  useEffect(() => {
-    if (!availableStudents.length) {
-      setSelectedStudentId('');
-      return;
-    }
-
-    if (!availableStudents.some((student) => valuesMatch(student.id, selectedStudentId))) {
-      setSelectedStudentId(availableStudents[0].id);
-    }
-  }, [availableStudents, selectedStudentId]);
-
-  const classOptions = useMemo(() => {
-    const labels = courseOptions
-      .map((course) => course.code || course.section || course.name)
-      .filter(Boolean);
-
-    return Array.from(new Set(labels));
-  }, [courseOptions]);
-
-  useEffect(() => {
-    if (selectedClassFilter && !classOptions.includes(selectedClassFilter)) {
-      setSelectedClassFilter('');
-    }
-  }, [classOptions, selectedClassFilter]);
-
-  const selectedStudent = useMemo(() => {
-    return availableStudents.find((student) => valuesMatch(student.id, selectedStudentId)) || availableStudents[0] || fallbackRows[0];
-  }, [availableStudents, selectedStudentId]);
-
-  const selectedCourse = useMemo(() => {
-    return courseOptions.find((course) => course.name === subject) || courseOptions[0] || null;
-  }, [courseOptions, subject]);
-
-  const rows = useMemo(() => {
-    return students.length
-      ? students.map((student) => {
-        const studentGrades = grades.filter((grade) => grade.studentId === student.id);
-        const latestGrade = studentGrades[0];
-        const averageScore = studentGrades.length
-          ? studentGrades.reduce((total, grade) => total + Number(grade.score || 0), 0) / studentGrades.length
-          : 0;
-
-        return {
-          id: student.id,
-          name: student.name,
-          profilePicture: student.profilePicture,
-          quiz: latestGrade?.term || '-',
-          assignment: latestGrade?.subject || '-',
-          midterm: latestGrade?.semester || '-',
-          final: latestGrade?.schoolYear || '-',
-          total: averageScore ? averageScore.toFixed(1) : '0.0',
-          grade: averageScore ? getLetterGrade(averageScore) : 'N/A',
-        };
-      })
+      .map((grade) => grade.schoolYear || '2025-2026');
+    const assignmentYears = user.role === 'teacher'
+      ? teacherAssignments
+        .filter((assignment) => assignment.teacherId === user.id)
+        .map((assignment) => assignment.schoolYear || '2025-2026')
       : [];
-  }, [grades, students]);
 
-  const displayRows = useMemo(() => {
-    return rows.filter((row) => {
-      const studentGrades = grades.filter((grade) => String(grade.studentId) === String(row.id));
-      const studentAssignments = teacherAssignments.filter((assignment) => String(assignment.studentId) === String(row.id));
-      const matchesSubject = !selectedSubjectFilter
-        || studentGrades.some((grade) => grade.subject === selectedSubjectFilter)
-        || studentAssignments.some((assignment) => assignment.subject === selectedSubjectFilter);
-      const matchesClass = !selectedClassFilter
-        || studentAssignments.some((assignment) => [assignment.section, assignment.course].includes(selectedClassFilter))
-        || students.find((student) => String(student.id) === String(row.id))?.course === selectedClassFilter;
+    return Array.from(new Set([...gradeYears, ...assignmentYears]))
+      .sort((left, right) => right.localeCompare(left));
+  }, [grades, teacherAssignments, teacherAssignedRows, user.id, user.role]);
+  const visibleGrades = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
-      return matchesSubject && matchesClass;
+    return grades.filter((grade) => {
+      const student = students.find((account) => String(account.id) === String(grade.studentId));
+      const mayView = user.role !== 'teacher'
+        || grade.teacherId === user.id
+        || teacherAssignedRows.has(`${String(grade.studentId)}|${grade.subject}`);
+      const matchesSearch = !query || [student?.name, grade.studentId, grade.subject, grade.feedback]
+        .some((value) => String(value || '').toLowerCase().includes(query));
+      const matchesSemester = semesterFilter === 'All' || (grade.semester || '1st Semester') === semesterFilter;
+      const matchesSchoolYear = schoolYearFilter === 'All' || (grade.schoolYear || '2025-2026') === schoolYearFilter;
+      const matchesClass = user.role !== 'teacher' || classFilter === 'All' || teacherAssignments.some((assignment) => (
+        assignment.teacherId === user.id
+        && String(assignment.studentId) === String(grade.studentId)
+        && assignment.subject === grade.subject
+        && getTeacherClassKey(assignment) === classFilter
+      ));
+
+      return mayView && matchesSearch && matchesSemester && matchesSchoolYear && matchesClass;
     });
-  }, [grades, rows, selectedClassFilter, selectedSubjectFilter, students, teacherAssignments]);
+  }, [classFilter, grades, search, schoolYearFilter, semesterFilter, students, teacherAssignments, teacherAssignedRows, user.id, user.role]);
 
-  const hasCompleteScores = activities.every((activity) => scores[activity.id] !== '');
-  const finalScore = hasCompleteScores
-    ? (
-        activities.reduce((total, activity) => total + Number(scores[activity.id] || 0), 0)
-        / activities.reduce((total, activity) => total + activity.max, 0)
-        * 100
-      ).toFixed(1)
-    : '---';
-  const letterGrade = hasCompleteScores ? getLetterGrade(Number(finalScore)) : '---';
-  const status = hasCompleteScores ? 'Complete' : 'Incomplete';
+  const gradeGroups = useMemo(() => {
+    const studentsById = new Map(students.map((student) => [String(student.id), student]));
+    const groups = new Map();
+    const query = search.trim().toLowerCase();
 
-  const handleScoreChange = (activity, value) => {
-    if (value !== '' && Number.isNaN(Number(value))) {
-      return;
+    const ensureGroup = ({ studentId: rawStudentId, subject: rawSubject, schoolYear: rawSchoolYear, semester: rawSemester }) => {
+      const studentId = String(rawStudentId);
+      const subject = rawSubject || 'Unassigned subject';
+      const schoolYear = rawSchoolYear || '2025-2026';
+      const semester = rawSemester || '1st Semester';
+      const groupId = JSON.stringify([studentId, subject, schoolYear, semester]);
+
+      if (!groups.has(groupId)) {
+        groups.set(groupId, {
+          id: groupId,
+          studentId,
+          studentName: studentsById.get(studentId)?.name || studentId,
+          subject,
+          schoolYear,
+          semester,
+          terms: {},
+        });
+      }
+
+      return groups.get(groupId);
+    };
+
+    if (user.role === 'teacher') {
+      teacherAssignments
+        .filter((assignment) => assignment.teacherId === user.id)
+        .filter((assignment) => classFilter === 'All' || getTeacherClassKey(assignment) === classFilter)
+        .filter((assignment) => semesterFilter === 'All' || (assignment.semester || '1st Semester') === semesterFilter)
+        .filter((assignment) => schoolYearFilter === 'All' || (assignment.schoolYear || '2025-2026') === schoolYearFilter)
+        .filter((assignment) => {
+          if (!query) return true;
+          const student = studentsById.get(String(assignment.studentId));
+          return [student?.name, assignment.studentId, assignment.subject, assignment.course, assignment.section]
+            .some((value) => String(value || '').toLowerCase().includes(query));
+        })
+        .forEach((assignment) => ensureGroup({
+          ...assignment,
+          subject: assignment.subject || assignment.course,
+        }));
     }
 
-    setErrorMessage('');
-    const numericValue = value === '' ? '' : Math.min(Number(value), activity.max);
-    setScores((currentScores) => ({
-      ...currentScores,
-      [activity.id]: numericValue === '' ? '' : String(Math.max(numericValue, 0)),
-    }));
+    visibleGrades.forEach((grade) => {
+      const group = ensureGroup(grade);
+      const termKey = getGradeTermKey(grade.term || 'Prelim');
+      const currentTermGrade = termKey ? group.terms[termKey] : null;
+      if (termKey && (!currentTermGrade || Number(grade.id) > Number(currentTermGrade.id))) {
+        group.terms[termKey] = grade;
+      }
+    });
+
+    return [...groups.values()].sort((left, right) => (
+      left.studentName.localeCompare(right.studentName)
+      || left.subject.localeCompare(right.subject)
+      || left.schoolYear.localeCompare(right.schoolYear)
+      || left.semester.localeCompare(right.semester)
+    ));
+  }, [classFilter, search, schoolYearFilter, semesterFilter, students, teacherAssignments, user.id, user.role, visibleGrades]);
+  const openAddForm = (group = null, period = 'Prelim') => {
+    setEditingGrade(null);
+    setForm({
+      ...emptyForm,
+      studentId: group?.studentId || availableStudents[0]?.id || '',
+      subject: group?.subject || subjectOptions[0] || '',
+      schoolYear: group?.schoolYear || emptyForm.schoolYear,
+      semester: group?.semester || emptyForm.semester,
+      term: period,
+    });
+    setIsModalOpen(true);
+  };
+
+  const openEditForm = (grade) => {
+    setEditingGrade(grade);
+    setForm({
+      studentId: grade.studentId,
+      subject: grade.subject,
+      score: String(grade.score),
+      feedback: grade.feedback || '',
+      schoolYear: grade.schoolYear || '2025-2026',
+      semester: grade.semester || '1st Semester',
+      term: getGradePeriodLabel(grade.term),
+    });
+    setIsModalOpen(true);
+  };
+
+  const closeForm = () => {
+    if (isSaving) return;
+    setIsModalOpen(false);
+    setEditingGrade(null);
+    setForm(emptyForm);
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    const score = Number(form.score);
 
-    if (!hasCompleteScores) {
-      setErrorMessage('Complete every score field before saving grades.');
-      return;
-    }
+    const minimumGrade = usesCollegeGradeScale ? 1 : 0;
+    const maximumGrade = usesCollegeGradeScale ? 5 : 100;
 
-    if (!selectedStudentId) {
-      setErrorMessage(subject ? 'Assign at least one student to this subject before saving grades.' : 'Assign students to this teacher before saving grades.');
-      return;
-    }
-
-    if (!subject) {
-      setErrorMessage('Create or assign a course before saving grades.');
+    if (!Number.isFinite(score) || score < minimumGrade || score > maximumGrade) {
+      error(usesCollegeGradeScale ? 'Grade must be between 1.0 and 5.0.' : 'Score must be between 0 and 100.');
       return;
     }
 
     try {
       setIsSaving(true);
-      setErrorMessage('');
-      setSuccessMessage('');
-      await addGrade({
-        studentId: selectedStudentId,
-        subject,
-        score: Number(finalScore),
-        feedback: `Quiz 1: ${scores.quiz1}, Quiz 2: ${scores.quiz2}, Assignment: ${scores.assignment}, Midterm: ${scores.midterm}, Final: ${scores.final}`,
-        schoolYear,
-        semester,
-        term,
-      });
+      const gradeDetails = {
+        subject: form.subject.trim(),
+        score,
+        feedback: form.feedback.trim(),
+        schoolYear: form.schoolYear.trim(),
+        semester: form.semester,
+        term: form.term,
+      };
+
+      if (editingGrade) {
+        await editGrade(editingGrade.id, gradeDetails);
+        success('Grade updated.');
+      } else {
+        await addGrade({ ...gradeDetails, studentId: form.studentId });
+        success('Grade added.');
+      }
+
       setIsModalOpen(false);
-      setSuccessMessage(`Grades for ${selectedStudent.name} were saved successfully.`);
-    } catch (error) {
-      setErrorMessage(getErrorText(error, 'We could not save the grade. Check the student and scores, then try again.'));
+      setEditingGrade(null);
+    } catch (requestError) {
+      error(requestError instanceof Error ? requestError.message : 'Grade could not be saved.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleExportCsv = () => {
-    const header = ['Student ID', 'Student Name', 'Latest Term', 'Latest Subject', 'Semester', 'School Year', 'Average Score', 'Grade'];
-    const body = displayRows.map((row) => [row.id, row.name, row.quiz, row.assignment, row.midterm, row.final, row.total, row.grade]);
-    const csvContent = [header, ...body]
-      .map((values) => values.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-
-    link.href = url;
-    link.download = 'assigned-student-grades.csv';
-    link.click();
-    URL.revokeObjectURL(url);
-    setSuccessMessage('Student grades exported to CSV.');
-  };
-
-  const handleExportExcel = () => {
-    const tableRows = displayRows.map((row) => `
-      <tr>
-        <td>${row.id}</td>
-        <td>${row.name}</td>
-        <td>${row.quiz}</td>
-        <td>${row.assignment}</td>
-        <td>${row.midterm}</td>
-        <td>${row.final}</td>
-        <td>${row.total}</td>
-        <td>${row.grade}</td>
-      </tr>
-    `).join('');
-    const workbook = `
-      <table>
-        <thead>
-          <tr>
-            <th>Student ID</th>
-            <th>Student Name</th>
-            <th>Latest Term</th>
-            <th>Latest Subject</th>
-            <th>Semester</th>
-            <th>School Year</th>
-            <th>Average Score</th>
-            <th>Grade</th>
-          </tr>
-        </thead>
-        <tbody>${tableRows}</tbody>
-      </table>
-    `;
-    const blob = new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-
-    link.href = url;
-    link.download = 'assigned-student-grades.xls';
-    link.click();
-    URL.revokeObjectURL(url);
-    setSuccessMessage('Student grades exported to Excel.');
-  };
-
-  const handleBulkUpload = async (event) => {
-    const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      setErrorMessage('Please upload a CSV file exported from Excel with columns: studentId, subject, score, feedback.');
-      event.target.value = '';
-      return;
-    }
+  const handleDelete = async (grade) => {
+    const studentName = students.find((student) => student.id === grade.studentId)?.name || grade.studentId;
+    if (!window.confirm(`Delete the ${grade.subject} grade for ${studentName}?`)) return;
 
     try {
-      setIsUploading(true);
-      setErrorMessage('');
-      setSuccessMessage('');
-
-      const text = await file.text();
-      const rowsToUpload = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .slice(1)
-        .map((line) => {
-          const [studentId, uploadedSubject, score, feedback = '', uploadedSchoolYear = schoolYear, uploadedSemester = semester, uploadedTerm = term] = line.split(',').map((value) => value.replace(/^"|"$/g, '').trim());
-          return {
-            studentId,
-            subject: uploadedSubject,
-            score: Number(score),
-            feedback,
-            schoolYear: uploadedSchoolYear,
-            semester: uploadedSemester,
-            term: uploadedTerm,
-          };
-        })
-        .filter((row) => row.studentId && row.subject && Number.isFinite(row.score));
-
-      if (rowsToUpload.length === 0) {
-        setErrorMessage('No valid grade rows were found. Use columns: studentId, subject, score, feedback.');
-        return;
-      }
-
-      await Promise.all(rowsToUpload.map((row) => addGrade(row)));
-      setSuccessMessage(`${rowsToUpload.length} grade row${rowsToUpload.length === 1 ? '' : 's'} uploaded successfully.`);
-    } catch (error) {
-      setErrorMessage(getErrorText(error, 'We could not upload the grades. Check the CSV format and try again.'));
-    } finally {
-      setIsUploading(false);
-      event.target.value = '';
+      await deleteGrade(grade.id);
+      success('Grade deleted.');
+    } catch (requestError) {
+      error(requestError instanceof Error ? requestError.message : 'Grade could not be deleted.');
     }
   };
 
   return (
-    <div className="grades-management-page">
-      <CenteredStatusCard
-        variant={errorMessage ? 'error' : 'success'}
-        title={errorMessage ? 'Action Needed' : 'Success'}
-        message={errorMessage || successMessage}
-        onDismiss={() => {
-          if (errorMessage) {
-            setErrorMessage('');
-          } else {
-            setSuccessMessage('');
-          }
-        }}
-      />
-
-      <div className="grades-management-header">
-        <h1>Grades Management</h1>
-        <div className="grades-management-actions">
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6" />
-            </svg>
-            <span className="button-content">
-              {isUploading && <LoadingSpinner label="Uploading grades" size="small" />}
-              {isUploading ? 'Uploading...' : 'Upload CSV'}
-            </span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            className="grades-file-input"
-            onChange={handleBulkUpload}
-          />
-          <button type="button" onClick={handleExportCsv}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3v12" />
-              <path d="m7 10 5 5 5-5" />
-              <path d="M5 21h14" />
-            </svg>
-            Export CSV
-          </button>
-          <button type="button" onClick={handleExportExcel}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3v12" />
-              <path d="m7 10 5 5 5-5" />
-              <path d="M5 21h14" />
-            </svg>
-            Export Excel
-          </button>
-          <button type="button" className="grades-add-btn" onClick={() => setIsModalOpen(true)}>
-            + Add Grades
-          </button>
+    <div className={user.role === 'teacher' ? 'grades-management-page teacher-grades-page' : 'grades-management-page'}>
+      <header className="grades-management-header">
+        <div>
+          <h1>{user.role === 'admin' ? 'All grades' : 'Teacher grades'}</h1>
         </div>
-      </div>
-
-      {successMessage && <StatusMessage variant="success" className="grades-status-message">{successMessage}</StatusMessage>}
-      {errorMessage && <StatusMessage variant="error" className="grades-status-message">{errorMessage}</StatusMessage>}
+        <button type="button" className="grades-add-btn" onClick={openAddForm}>Add grade</button>
+      </header>
 
       <section className="grades-filter-bar" aria-label="Grade filters">
         <label>
-          <span>Subject</span>
-          <select value={selectedSubjectFilter} onChange={(event) => setSelectedSubjectFilter(event.target.value)}>
-            <option value="">All subjects</option>
-            {courseOptions.map((course) => (
-              <option key={course.id || course.name} value={course.name}>{course.name}</option>
-            ))}
-          </select>
+          <span>Search</span>
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Student, subject, or feedback" />
         </label>
+        {user.role === 'teacher' && (
+          <div
+            className="teacher-class-filter"
+            ref={classFilterContainerRef}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setIsClassMenuOpen(false);
+            }}
+          >
+            <span id="teacher-class-filter-label">Class / section</span>
+            <button
+              type="button"
+              className="teacher-class-trigger"
+              ref={classFilterTriggerRef}
+              aria-labelledby="teacher-class-filter-label teacher-class-filter-value"
+              aria-haspopup="listbox"
+              aria-expanded={isClassMenuOpen}
+              aria-controls="teacher-class-filter-options"
+              onClick={() => setIsClassMenuOpen((isOpen) => !isOpen)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  setIsClassMenuOpen(true);
+                  requestAnimationFrame(() => classOptionRefs.current[0]?.focus());
+                }
+              }}
+            >
+              <span id="teacher-class-filter-value">{selectedTeacherClassLabel}</span>
+              <span className="teacher-class-chevron" aria-hidden="true" />
+            </button>
+            {isClassMenuOpen && (
+              <div
+                className="teacher-class-options"
+                id="teacher-class-filter-options"
+                role="listbox"
+                aria-labelledby="teacher-class-filter-label"
+              >
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={classFilter === 'All'}
+                  className={`teacher-class-option ${classFilter === 'All' ? 'selected' : ''}`.trim()}
+                  ref={(element) => { classOptionRefs.current[0] = element; }}
+                  onClick={() => selectTeacherClass('All')}
+                  onKeyDown={(event) => handleClassOptionKeyDown(event, 0)}
+                >
+                  All my classes
+                </button>
+                {teacherClassOptions.map((classOption, index) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={classFilter === classOption.key}
+                    className={`teacher-class-option ${classFilter === classOption.key ? 'selected' : ''}`.trim()}
+                    key={classOption.key}
+                    title={classOption.label}
+                    ref={(element) => { classOptionRefs.current[index + 1] = element; }}
+                    onClick={() => selectTeacherClass(classOption.key)}
+                    onKeyDown={(event) => handleClassOptionKeyDown(event, index + 1)}
+                  >
+                    {classOption.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <label>
-          <span>Class</span>
-          <select value={selectedClassFilter} onChange={(event) => setSelectedClassFilter(event.target.value)}>
-            <option value="">All classes</option>
-            {classOptions.map((className) => (
-              <option key={className} value={className}>{className}</option>
-            ))}
+          <span>School year</span>
+          <select value={schoolYearFilter} onChange={(event) => setSchoolYearFilter(event.target.value)}>
+            <option value="All">All school years</option>
+            {schoolYears.map((schoolYear) => <option value={schoolYear} key={schoolYear}>{schoolYear}</option>)}
           </select>
         </label>
         <label>
           <span>Semester</span>
-          <select defaultValue="1st Semester">
+          <select value={semesterFilter} onChange={(event) => setSemesterFilter(event.target.value)}>
+            <option value="All">All semesters</option>
             <option>1st Semester</option>
             <option>2nd Semester</option>
+            <option>Summer</option>
           </select>
         </label>
-        <button type="button" onClick={() => {
-          setSelectedSubjectFilter('');
-          setSelectedClassFilter('');
-        }}>Clear Filters</button>
       </section>
 
       <section className="grades-table-card">
-        <table className="grades-management-table">
-          <thead>
-            <tr>
-              <th>Student Name</th>
-              <th>Latest Term</th>
-              <th>Latest Subject</th>
-              <th>Semester</th>
-              <th>School Year</th>
-              <th>Average Score</th>
-              <th>Grade</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayRows.map((row) => (
-              <tr key={row.id}>
-                <td>
-                  <UserAvatar user={row} className="grades-student-avatar" fallback="S" />
-                  <span className="grades-student-info">
-                    <strong>{row.name}</strong>
-                    <small>ID: {row.id}</small>
-                  </span>
-                </td>
-                <td>{row.quiz}</td>
-                <td>{row.assignment}</td>
-                <td>{row.midterm}</td>
-                <td>{row.final}</td>
-                <td className="grades-total">{row.total}</td>
-                <td>
-                  <span className={`grades-letter ${row.grade === 'C' ? 'low' : ''}`}>{row.grade}</span>
-                </td>
-              </tr>
-            ))}
-            {displayRows.length === 0 && (
-              <tr>
-                <td colSpan="7">{students.length === 0 ? 'No assigned students yet. Ask an admin to assign students before adding grades.' : 'No students match the selected filters.'}</td>
-              </tr>
-            )}
-          </tbody>
+        <table className={user.role === 'teacher' ? 'grades-management-table teacher-grade-management-table' : 'grades-management-table'}>
+          {user.role === 'teacher' ? (
+            <>
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Subject</th>
+                  <th>School year</th>
+                  <th>Semester</th>
+                  {GRADE_TERMS.map(({ key, label }) => <th key={key}>{label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {gradeGroups.map((group) => (
+                  <tr key={group.id}>
+                    <td>{group.studentName}</td>
+                    <td>{group.subject}</td>
+                    <td>{group.schoolYear}</td>
+                    <td>{group.semester}</td>
+                    {GRADE_TERMS.map(({ key, label }) => {
+                      const grade = group.terms[key];
+                      const mayEdit = !grade || user.role === 'admin' || grade.teacherId === user.id;
+
+                      return (
+                        <td className="teacher-period-score" key={key}>
+                          <div className="teacher-period-cell">
+                            <strong>{grade ? formatGradeValue(grade) : '-'}</strong>
+                            {mayEdit ? (
+                              <div className="teacher-period-actions">
+                                <button type="button" onClick={() => (grade ? openEditForm(grade) : openAddForm(group, label))}>
+                                  {grade ? 'Edit' : 'Add'}
+                                </button>
+                                {grade && (
+                                  <button type="button" className="delete" onClick={() => handleDelete(grade)}>Delete</button>
+                                )}
+                              </div>
+                            ) : <span>View only</span>}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+                {gradeGroups.length === 0 && (
+                  <tr><td colSpan={7} className="grades-empty">No grade records match your filters.</td></tr>
+                )}
+              </tbody>
+            </>
+          ) : (
+            <>
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Subject</th>
+                  <th>Grade / Score</th>
+                  <th>Grading period</th>
+                  <th>Semester</th>
+                  <th>Feedback</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleGrades.map((grade) => {
+                  const student = students.find((account) => account.id === grade.studentId);
+                  const mayEdit = user.role === 'admin' || grade.teacherId === user.id;
+
+                  return (
+                    <tr key={grade.id}>
+                      <td>{student?.name || grade.studentId}</td>
+                      <td>{grade.subject}</td>
+                      <td>{formatGradeValue(grade)}</td>
+                      <td>{getGradePeriodLabel(grade.term)}</td>
+                      <td>{grade.semester || '1st Semester'}</td>
+                      <td>{grade.feedback || '—'}</td>
+                      <td className="grade-row-actions">
+                        {mayEdit ? (
+                          <>
+                            <button type="button" onClick={() => openEditForm(grade)}>Edit</button>
+                            <button type="button" className="delete" onClick={() => handleDelete(grade)}>Delete</button>
+                          </>
+                        ) : <span>View only</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {visibleGrades.length === 0 && (
+                  <tr><td colSpan="7" className="grades-empty">No grade records match your search.</td></tr>
+                )}
+              </tbody>
+            </>
+          )}
         </table>
-
-        <div className="grades-table-footer">
-          <span>Showing {displayRows.length} assigned student{displayRows.length === 1 ? '' : 's'}</span>
-          <div className="grades-pagination" aria-label="Pagination">
-            <button type="button" className="active">1</button>
-            <button type="button">2</button>
-            <button type="button">3</button>
-            <button type="button" aria-label="Next page">{'>'}</button>
-          </div>
-        </div>
       </section>
-
-      <div className="grades-summary-grid">
-        <section className="grades-summary-card dark">
-          <p>Class Average</p>
-          <strong>{classAnalytics?.classAverage || 0}%</strong>
-          <small>Based on visible assigned grades</small>
-        </section>
-        <section className="grades-summary-card purple">
-          <p>Top Performers</p>
-          <strong>{classAnalytics?.topPerformers?.length || 0}</strong>
-          <small>Students ranked by average score</small>
-        </section>
-        <section className="grades-summary-card muted">
-          <p>Grade Records</p>
-          <strong>{grades.length}</strong>
-          <small>Visible for this role</small>
-        </section>
-      </div>
 
       {isModalOpen && (
         <div className="add-grades-overlay" role="presentation">
           <form className="add-grades-modal" onSubmit={handleSubmit} role="dialog" aria-modal="true" aria-labelledby="add-grades-title" aria-busy={isSaving}>
-            <div className="add-grades-modal-header">
-              <h2 id="add-grades-title">Add Grades - {subject || 'Select Course'}{selectedCourse?.code ? ` (${selectedCourse.code})` : ''}</h2>
-              <button type="button" aria-label="Close add grades modal" onClick={() => setIsModalOpen(false)}>
-                x
-              </button>
-            </div>
+            <header className="add-grades-modal-header">
+              <div>
+                <p className="grades-page-kicker">Grade record</p>
+                <h2 id="add-grades-title">{editingGrade ? 'Edit grade' : 'Add grade'}</h2>
+              </div>
+              <button type="button" aria-label="Close grade form" onClick={closeForm}>×</button>
+            </header>
 
-            <label className="add-grades-field">
-              <span>Select Student</span>
-              <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-                {availableStudents.length === 0 && <option value="">No assigned students</option>}
-                {availableStudents.map((student) => (
-                  <option key={student.id} value={student.id}>{student.name}</option>
-                ))}
-              </select>
-            </label>
+            {!editingGrade && (
+              <label className="add-grades-field">
+                <span>Student</span>
+                <select value={form.studentId} onChange={(event) => setForm((current) => ({ ...current, studentId: event.target.value }))} required>
+                  {availableStudents.length === 0 && <option value="">No assigned students</option>}
+                  {availableStudents.map((student) => <option key={student.id} value={student.id}>{student.name} ({student.id})</option>)}
+                </select>
+              </label>
+            )}
 
             <label className="add-grades-field">
               <span>Subject</span>
-              <select value={subject} onChange={(event) => setSubject(event.target.value)} required>
-                {courseOptions.length === 0 && <option value="">No courses available</option>}
-                {courseOptions.map((course) => (
-                  <option key={course.id || course.name} value={course.name}>{course.name}</option>
-                ))}
+              <select value={form.subject} onChange={(event) => setForm((current) => ({ ...current, subject: event.target.value }))} required>
+                {subjectOptions.length === 0 && <option value="">No courses available</option>}
+                {subjectOptions.map((subject) => <option key={subject}>{subject}</option>)}
               </select>
             </label>
 
-            <div className="form-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+            <label className="add-grades-field">
+              <span>{usesCollegeGradeScale ? 'Grade (1.0 = highest, 5.0 = lowest)' : 'Score (0 to 100)'}</span>
+              <input type="number" min={usesCollegeGradeScale ? 1 : 0} max={usesCollegeGradeScale ? 5 : 100} step="0.1" value={form.score} onChange={(event) => setForm((current) => ({ ...current, score: event.target.value }))} required />
+            </label>
+
+            <label className="add-grades-field">
+              <span>Feedback</span>
+              <textarea maxLength="500" rows="3" value={form.feedback} onChange={(event) => setForm((current) => ({ ...current, feedback: event.target.value }))} />
+            </label>
+
+            <div className="add-grades-form-row">
               <label className="add-grades-field">
-                <span>School Year</span>
-                <input value={schoolYear} onChange={(event) => setSchoolYear(event.target.value)} required />
+                <span>School year</span>
+                <input value={form.schoolYear} onChange={(event) => setForm((current) => ({ ...current, schoolYear: event.target.value }))} required />
               </label>
               <label className="add-grades-field">
                 <span>Semester</span>
-                <select value={semester} onChange={(event) => setSemester(event.target.value)}>
+                <select value={form.semester} onChange={(event) => setForm((current) => ({ ...current, semester: event.target.value }))}>
                   <option>1st Semester</option>
                   <option>2nd Semester</option>
                   <option>Summer</option>
                 </select>
               </label>
               <label className="add-grades-field">
-                <span>Term</span>
-                <select value={term} onChange={(event) => setTerm(event.target.value)}>
+                <span>Grading period</span>
+                <select value={form.term} onChange={(event) => setForm((current) => ({ ...current, term: event.target.value }))}>
                   <option>Prelim</option>
                   <option>Midterm</option>
-                  <option>Final</option>
+                  <option>Finals</option>
                 </select>
               </label>
             </div>
 
-            <div className="score-entry">
-              <p>Scores Entry</p>
-              <div className="score-entry-table">
-                <div className="score-entry-head">
-                  <span>Activity</span>
-                  <span>Score</span>
-                  <span>Max Score</span>
-                </div>
-                {activities.map((activity) => (
-                  <label className="score-entry-row" key={activity.id}>
-                    <span>{activity.label}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max={activity.max}
-                      value={scores[activity.id]}
-                      placeholder="-"
-                      aria-label={`${activity.label} score for ${selectedStudent.name}`}
-                      onChange={(event) => handleScoreChange(activity, event.target.value)}
-                    />
-                    <span>{activity.max}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="grade-result">
-              <p>Result (Auto)</p>
-              <div className="grade-result-panel">
-                <span>
-                  <small>Final Score</small>
-                  <strong>{finalScore}</strong>
-                </span>
-                <span>
-                  <small>Grade</small>
-                  <strong>{letterGrade}</strong>
-                </span>
-                <span>
-                  <small>Status</small>
-                  <strong>- {status}</strong>
-                </span>
-              </div>
-            </div>
-
-            {!hasCompleteScores && (
-              <StatusMessage variant="info" className="add-grades-validation-message">
-                Enter all scores to enable Save Grades.
-              </StatusMessage>
-            )}
-
-            <div className="add-grades-modal-actions">
-              <button type="button" onClick={() => setIsModalOpen(false)}>Cancel</button>
-              <button type="submit" disabled={!hasCompleteScores || !subject || !selectedStudentId || isSaving}>
-                <span className="button-content">
-                  {isSaving && <LoadingSpinner label="Saving grades" size="small" />}
-                  {isSaving ? 'Saving...' : 'Save Grades'}
-                </span>
-              </button>
-            </div>
+            <footer className="add-grades-modal-actions">
+              <button type="button" className="secondary" onClick={closeForm} disabled={isSaving}>Cancel</button>
+              <button type="submit" disabled={isSaving || !form.subject || (!editingGrade && !form.studentId)}>{isSaving ? 'Saving…' : 'Save grade'}</button>
+            </footer>
           </form>
         </div>
       )}

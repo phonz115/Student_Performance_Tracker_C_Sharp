@@ -1,4 +1,4 @@
-import type { AppUser, AuditLog, Course, GradeScale, Subject, TeacherAssignment } from '../types';
+import type { AppUser, Course, Subject, TeacherAssignment } from '../types';
 import { apiPost, apiRequest } from './apiClient';
 
 export type UserPayload = {
@@ -69,27 +69,6 @@ export const getSubjects = () => apiRequest<Subject[]>('/subjects');
 export const createSubject = (subject: Subject) => {
   return apiPost<Subject, Subject>('/subjects', subject);
 };
-
-export const getGradeScales = () => apiRequest<GradeScale[]>('/grade-scales');
-
-export const createGradeScale = (scale: GradeScale) => {
-  return apiPost<GradeScale, GradeScale>('/grade-scales', scale);
-};
-
-export const updateGradeScale = (scaleId: number, scale: GradeScale) => {
-  return apiRequest<GradeScale>(`/grade-scales/${scaleId}`, {
-    method: 'PUT',
-    body: JSON.stringify(scale),
-  });
-};
-
-export const deleteGradeScale = (scaleId: number) => {
-  return apiRequest<{ ok: boolean }>(`/grade-scales/${scaleId}`, {
-    method: 'DELETE',
-  });
-};
-
-export const getAuditLogs = () => apiRequest<AuditLog[]>('/audit-logs');
 
 export const getBackup = () => apiRequest<Record<string, unknown>>('/backup');
 

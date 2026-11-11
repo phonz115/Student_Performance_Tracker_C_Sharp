@@ -1,88 +1,36 @@
-import React, { useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import UserAvatar from './UserAvatar';
-import { getInitials } from '../utils/avatar';
 import { formatName } from '../utils/formatName';
-import { resizeProfileImage } from '../utils/profilePhoto';
+
+const userSections = [
+  { to: '/manage-users#teachers', label: 'Teachers', hash: '#teachers' },
+  { to: '/manage-users#students', label: 'Students', hash: '#students' },
+  { to: '/manage-users#admins', label: 'Admins', hash: '#admins' },
+];
 
 const Sidebar = () => {
-  const { user, logout, updateProfilePicture } = useAuth();
+  const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const fileInputRef = useRef(null);
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
-  const [photoError, setPhotoError] = useState('');
+  const displayName = formatName(user?.name) || 'User';
+  const isManageUsersRoute = location.pathname === '/manage-users';
+  const isUsersSectionActive = isManageUsersRoute && location.hash !== '#courses';
 
-  const handleLogout = () => {
-    const confirmed = window.confirm('Log out of ClassIQ? You will return to the login screen.');
+  const navItems = user?.role === 'admin'
+    ? [
+      { to: '/dashboard', label: 'Dashboard' },
+      { to: '/add-grades', label: 'All Grades' },
+      { to: '/manage-users#users', label: 'Users', hash: '#users' },
+      { to: '/manage-users#courses', label: 'Courses & Subjects', hash: '#courses' },
+    ]
+    : [
+      { to: '/dashboard', label: 'Dashboard' },
+      { to: '/add-grades', label: 'Grades' },
+    ];
 
-    if (!confirmed) {
-      return;
-    }
-
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/');
-  };
-
-  const initials = getInitials(user?.name, 'U');
-  const displayName = formatName(user?.name) || 'Crist Bland';
-  const roleLabel = user?.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : 'ClassID';
-  const canUploadProfilePicture = ['teacher', 'student'].includes(user?.role);
-  const sidebarNameSize = displayName.length > 24
-    ? '10px'
-    : displayName.length > 18
-      ? '11px'
-      : displayName.length > 14
-        ? '12px'
-        : '14px';
-
-  const handleProfilePictureChange = async (event) => {
-    const file = event.target.files?.[0];
-
-    if (!file || !user || !canUploadProfilePicture) {
-      return;
-    }
-
-    try {
-      setIsUploadingPhoto(true);
-      setPhotoError('');
-      const profilePicture = await resizeProfileImage(file);
-      await updateProfilePicture(profilePicture);
-    } catch (error) {
-      setPhotoError(error instanceof Error ? error.message : 'Profile picture could not be saved.');
-    } finally {
-      setIsUploadingPhoto(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
-
-  const adminNavItems = [
-    { to: '/dashboard', label: 'Dashboard' },
-    { to: '/manage-users#users', label: 'Users', hash: '#users' },
-    { to: '/manage-users#courses', label: 'Courses', hash: '#courses' },
-    { to: '/generate-report', label: 'Reports' },
-    { to: '/manage-users#grade-scale', label: 'Grade Scale', hash: '#grade-scale' },
-    { to: '/manage-users#audit-logs', label: 'Audit Logs', hash: '#audit-logs' },
-  ];
-  const defaultNavItems = [
-    { to: '/dashboard', label: 'Dashboard' },
-    { to: '/add-grades', label: user?.role === 'teacher' ? 'Classes' : 'Grades' },
-    { to: '/students', label: 'Students', visible: user?.role === 'teacher' },
-    { to: '/grades-management', label: 'Grades', visible: user?.role === 'teacher' },
-    { to: '/generate-report', label: 'Reports' },
-  ];
-  const navItems = user?.role === 'admin' ? adminNavItems : defaultNavItems;
-  const isNavItemActive = (item, isActive) => {
-    if (item.hash) {
-      return location.pathname === '/manage-users' && location.hash === item.hash;
-    }
-
-    return isActive;
   };
 
   return (
@@ -92,37 +40,51 @@ const Sidebar = () => {
       </div>
 
       <div className="sidebar-profile">
-        {canUploadProfilePicture ? (
-          <label className={`sidebar-avatar-upload${isUploadingPhoto ? ' uploading' : ''}`} title="Upload profile picture">
-            <UserAvatar user={user} className="sidebar-avatar" fallback={initials} />
-            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={handleProfilePictureChange} disabled={isUploadingPhoto} />
-            <span className="sidebar-avatar-edit-label">{isUploadingPhoto ? '...' : 'Change'}</span>
-          </label>
-        ) : (
-          <UserAvatar user={user} className="sidebar-avatar" fallback={initials} />
-        )}
         <div className="sidebar-profile-info">
-          <p className="sidebar-name" style={{ '--sidebar-name-size': sidebarNameSize }}>{displayName}</p>
-          <p className="sidebar-id">{roleLabel}</p>
+          <p className="sidebar-name">{displayName}</p>
+          <p className="sidebar-id">{user?.role || 'User'}</p>
         </div>
       </div>
-      {photoError && <p className="sidebar-upload-error">{photoError}</p>}
 
-      <nav className="sidebar-nav">
-        {navItems
-          .filter((item) => item.visible !== false)
-          .map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => `sidebar-link${isNavItemActive(item, isActive) ? ' active' : ''}`}
-            >
-              {item.label}
-            </NavLink>
-          ))}
+      <nav className="sidebar-nav" aria-label="Main navigation">
+        {navItems.map((item) => {
+          const isUsersParent = item.hash === '#users';
+          return (
+            <div key={item.to} className="sidebar-nav-item">
+              <NavLink
+                to={item.to}
+                end={!item.hash}
+                className={({ isActive }) => {
+                  const active = isUsersParent
+                    ? isUsersSectionActive
+                    : item.hash
+                      ? location.hash === item.hash
+                      : isActive;
+                  return `sidebar-link${active ? ' active' : ''}`;
+                }}
+              >
+                {item.label}
+              </NavLink>
+              {isUsersParent && isUsersSectionActive && (
+                <div className="sidebar-subnav" aria-label="User categories">
+                  {userSections.map((section) => (
+                    <NavLink
+                      key={section.hash}
+                      to={section.to}
+                      className="sidebar-subnav-link"
+                    >
+                      <span className="sidebar-subnav-plus" aria-hidden="true">+</span>
+                      {section.label}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
-      <button type="button" className="sidebar-logout" onClick={handleLogout} aria-label="Log out of ClassIQ">
+      <button type="button" className="sidebar-logout" onClick={handleLogout}>
         Logout
       </button>
     </aside>

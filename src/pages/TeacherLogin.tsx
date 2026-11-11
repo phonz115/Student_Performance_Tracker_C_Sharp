@@ -12,7 +12,6 @@ const TeacherLogin = () => (
     invalidMessage="Invalid Email Address or Password"
     missingIdentifierMessage="Enter your email address first, then request a password reset."
     normalizeIdentifier={(value) => value.trim().toLowerCase()}
-    registerPath="/register?role=teacher"
   />
 );
 

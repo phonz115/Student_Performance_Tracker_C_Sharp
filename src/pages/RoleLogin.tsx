@@ -1,11 +1,11 @@
 import { useState, type CSSProperties, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Layout from '../components/Layout';
-import { LoadingSpinner, StatusMessage } from '../components/ui';
+import { LoadingSpinner } from '../components/ui';
 import { useAuth } from '../hooks/useAuth';
 import { useStatusToast } from '../hooks/useNotifications';
-import studentIcons from '../assets/icon.png';
+import studentIcons from '../assets/icon-transparent.png';
 import type { UserRole } from '../types';
 
 type RoleLoginProps = {
@@ -18,9 +18,6 @@ type RoleLoginProps = {
   identifierType: 'email' | 'text';
   invalidMessage: string;
   missingIdentifierMessage: string;
-  buttonColor?: string;
-  registerPath?: string;
-  showRememberMe?: boolean;
   normalizeIdentifier?: (value: string) => string;
 };
 
@@ -63,9 +60,6 @@ const RoleLogin = ({
   identifierType,
   invalidMessage,
   missingIdentifierMessage,
-  buttonColor = '#2563eb',
-  registerPath,
-  showRememberMe = true,
   normalizeIdentifier = (value) => value.trim(),
 }: RoleLoginProps) => {
   const { login, requestPasswordReset } = useAuth();
@@ -73,7 +67,6 @@ const RoleLogin = ({
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -88,14 +81,14 @@ const RoleLogin = ({
     setIsSubmitting(true);
 
     try {
-      const success = await login(normalizeIdentifier(identifier), password, role, rememberMe);
+      const success = await login(normalizeIdentifier(identifier), password, role);
 
       if (!success) {
         setError(invalidMessage);
         return;
       }
 
-      navigate('/dashboard');
+      navigate(role === 'student' ? '/add-grades' : '/dashboard');
     } catch (err) {
       setError(getErrorMessage(err, invalidMessage));
     } finally {
@@ -135,9 +128,6 @@ const RoleLogin = ({
               <p style={styles.subtitle}>{subtitle}</p>
             </div>
 
-            {error && <StatusMessage variant="error">{error}</StatusMessage>}
-            {successMessage && <StatusMessage variant="success">{successMessage}</StatusMessage>}
-
             <form onSubmit={handleSubmit} style={styles.form} aria-busy={isSubmitting}>
               <div style={styles.inputGroup}>
                 <label style={styles.label}>{identifierLabel}</label>
@@ -176,45 +166,20 @@ const RoleLogin = ({
                 </div>
               </div>
 
-              {showRememberMe ? (
-                <div style={styles.formOptions} className="form-options">
-                  <label style={styles.rememberLabel}>
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(event) => setRememberMe(event.target.checked)}
-                      className="remember-checkbox"
-                    />
-                    Remember Me
-                  </label>
-                  <button type="button" className="forgot-btn" onClick={handleForgotPassword} disabled={isResetting || isSubmitting}>
-                    <span className="button-content">
-                      {isResetting && <LoadingSpinner label="Requesting password reset" size="small" />}
-                      Forgot Password?
-                    </span>
-                  </button>
-                </div>
-              ) : (
-                <button type="button" className="forgot-btn" onClick={handleForgotPassword} style={styles.forgotButton} disabled={isResetting || isSubmitting}>
-                  <span className="button-content">
-                    {isResetting && <LoadingSpinner label="Requesting password reset" size="small" />}
-                    Forgot Password?
-                  </span>
-                </button>
-              )}
+              <button type="button" className="forgot-btn" onClick={handleForgotPassword} style={styles.forgotButton} disabled={isResetting || isSubmitting}>
+                <span className="button-content">
+                  {isResetting && <LoadingSpinner label="Requesting password reset" size="small" />}
+                  Forgot Password?
+                </span>
+              </button>
 
-              <button type="submit" style={{ ...styles.button, background: buttonColor }} disabled={isSubmitting || isResetting}>
+              <button type="submit" style={styles.button} disabled={isSubmitting || isResetting}>
                 <span className="button-content">
                   {isSubmitting && <LoadingSpinner label="Signing in" size="small" />}
                   {isSubmitting ? 'Signing in...' : 'Log In'}
                 </span>
               </button>
 
-              {registerPath && (
-                <div style={styles.signUpText}>
-                  Don't have an account? <Link to={registerPath} style={styles.signUpLink}>Sign up</Link>
-                </div>
-              )}
             </form>
           </div>
         </div>
@@ -225,23 +190,20 @@ const RoleLogin = ({
 
 const styles: Record<string, CSSProperties> = {
   container: { display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%' },
-  card: { background: 'white', padding: '56px 52px', borderRadius: '22px', boxShadow: '0 18px 40px rgba(15,23,42,0.08)', width: '100%', maxWidth: '520px' },
-  header: { textAlign: 'center', marginBottom: '34px' },
-  title: { margin: '0', fontSize: '32px', color: '#111827', fontWeight: '700', lineHeight: '1.15' },
-  subtitle: { color: '#4b5563', fontSize: '17px', marginTop: '12px', lineHeight: '1.35' },
-  form: { display: 'flex', flexDirection: 'column', gap: '24px' },
-  inputGroup: { display: 'flex', flexDirection: 'column', gap: '11px' },
-  label: { fontSize: '17px', fontWeight: '500', color: '#1f2937' },
-  input: { minHeight: '58px', padding: '0 20px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '14px', fontSize: '18px', outline: 'none', color: '#111827', caretColor: '#111827', WebkitTextFillColor: '#111827', boxSizing: 'border-box' },
+  card: { background: 'white', padding: '40px 36px', borderRadius: '20px', boxShadow: '0 18px 40px rgba(15,23,42,0.08)', width: '100%', maxWidth: '480px', boxSizing: 'border-box' },
+  header: { textAlign: 'center', marginBottom: '24px' },
+  title: { margin: '0', fontSize: '28px', color: '#111827', fontWeight: '700', lineHeight: '1.15' },
+  subtitle: { color: '#4b5563', fontSize: '15px', marginTop: '8px', lineHeight: '1.35' },
+  form: { display: 'flex', flexDirection: 'column', gap: '18px' },
+  inputGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
+  label: { fontSize: '15px', fontWeight: '500', color: '#1f2937' },
+  input: { minHeight: '50px', padding: '0 16px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '12px', fontSize: '16px', outline: 'none', color: '#111827', caretColor: '#111827', WebkitTextFillColor: '#111827', boxSizing: 'border-box' },
   passwordWrapper: { position: 'relative', width: '100%' },
-  passwordInput: { width: '100%', minHeight: '58px', padding: '0 58px 0 20px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '14px', fontSize: '18px', outline: 'none', boxSizing: 'border-box', color: '#111827', caretColor: '#111827', WebkitTextFillColor: '#111827' },
-  eyeIconButton: { position: 'absolute', right: '18px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', display: 'flex', border: 'none', background: 'transparent', padding: '4px' },
+  passwordInput: { width: '100%', minHeight: '50px', padding: '0 52px 0 16px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '12px', fontSize: '16px', outline: 'none', boxSizing: 'border-box', color: '#111827', caretColor: '#111827', WebkitTextFillColor: '#111827' },
+  eyeIconButton: { position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', display: 'flex', border: 'none', background: 'transparent', padding: '4px' },
   formOptions: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', fontSize: '16px' },
-  rememberLabel: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '16px', color: '#1f2937', cursor: 'pointer' },
-  forgotButton: { alignSelf: 'flex-end', background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '16px', fontWeight: '500', padding: '0' },
-  signUpText: { display: 'flex', justifyContent: 'center', width: '100%', marginTop: '22px', color: '#1f2937', fontSize: '16px' },
-  signUpLink: { color: '#2563eb', textDecoration: 'none', fontWeight: '600' },
-  button: { minHeight: '58px', padding: '0 18px', borderRadius: '14px', border: 'none', color: 'white', fontSize: '17px', fontWeight: '600', cursor: 'pointer', marginTop: '12px' },
+  forgotButton: { alignSelf: 'flex-end', background: 'transparent', border: 'none', color: 'var(--primary, #315d9b)', cursor: 'pointer', fontSize: '14px', fontWeight: '500', padding: '0' },
+  button: { minHeight: '50px', padding: '0 16px', borderRadius: '12px', border: 'none', background: 'var(--primary, #315d9b)', color: 'white', fontSize: '16px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' },
   errorBox: { color: '#b91c1c', backgroundColor: '#fef2f2', padding: '14px', borderRadius: '10px', textAlign: 'center', marginBottom: '18px', border: '1px solid #fecaca', fontSize: '15px' },
 };
 

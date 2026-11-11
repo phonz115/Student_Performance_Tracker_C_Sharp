@@ -86,16 +86,13 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     const variant = notification.variant || 'info';
     const id = Date.now() + Math.floor(Math.random() * 1000);
 
-    setNotifications((currentNotifications) => [
-      ...currentNotifications,
-      {
-        id,
-        message,
-        title: notification.title,
-        variant,
-        duration: notification.duration ?? DEFAULT_DURATION[variant],
-      },
-    ]);
+    setNotifications([{
+      id,
+      message,
+      title: notification.title,
+      variant,
+      duration: notification.duration ?? DEFAULT_DURATION[variant],
+    }]);
   }, []);
 
   useEffect(() => {

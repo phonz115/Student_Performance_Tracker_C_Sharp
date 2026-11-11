@@ -16,8 +16,7 @@ const SESSION_COOKIE_NAME = "classiq_session";
 const SESSION_EXPIRY_MS = 30 * 60 * 1000;
 const API_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const API_RATE_LIMIT_MAX_REQUESTS = 300;
-const MAX_PROFILE_PICTURE_LENGTH = 750000;
-const STUDENT_PROGRAMS = new Set(["BSIT", "BSCS", "BSIS"]);
+const STUDENT_PROGRAMS = new Set(["BSIT", "BSCS", "BSEMC"]);
 const loginAttempts = new Map();
 const passwordResetTokens = new Map();
 const sessions = new Map();
@@ -106,24 +105,6 @@ const sanitizeText = (value, maxLength = 255) => {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;")
     .slice(0, maxLength);
-};
-
-const sanitizeProfilePicture = (value) => {
-  const profilePicture = String(value || "").trim();
-
-  if (!profilePicture) {
-    return "";
-  }
-
-  if (profilePicture.length > MAX_PROFILE_PICTURE_LENGTH) {
-    throw new Error("Profile picture is too large");
-  }
-
-  if (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(profilePicture)) {
-    throw new Error("Profile picture must be a PNG, JPG, or WEBP image");
-  }
-
-  return profilePicture;
 };
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
@@ -361,15 +342,6 @@ const ensureApplicationSchema = async () => {
     ) ENGINE=InnoDB
   `);
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS attendance (
-      log_id INT AUTO_INCREMENT PRIMARY KEY,
-      student_id VARCHAR(40) NOT NULL,
-      log_date DATE NOT NULL,
-      status VARCHAR(20) NOT NULL
-    ) ENGINE=InnoDB
-  `);
-
   await trySchemaChange("subjects.teacher_id nullable", "ALTER TABLE subjects MODIFY teacher_id VARCHAR(40) NULL");
 
   if (await tableExists("users")) {
@@ -379,7 +351,6 @@ const ensureApplicationSchema = async () => {
     await ensureColumn("users", "course", "VARCHAR(100) DEFAULT ''");
     await ensureColumn("users", "school_year", "VARCHAR(20) NOT NULL DEFAULT '2025-2026'");
     await ensureColumn("users", "semester", "VARCHAR(40) NOT NULL DEFAULT '1st Semester'");
-    await ensureColumn("users", "profile_picture", "MEDIUMTEXT NULL");
     await pool.query(
       `UPDATE users
        SET name = TRIM(CONCAT_WS(' ', firstname, lastname))
@@ -422,7 +393,6 @@ const ensureApplicationSchema = async () => {
       code VARCHAR(40) NOT NULL,
       name VARCHAR(120) NOT NULL,
       description VARCHAR(255) DEFAULT '',
-      schedule VARCHAR(255) DEFAULT '',
       school_year VARCHAR(20) NOT NULL DEFAULT '2025-2026',
       semester VARCHAR(40) NOT NULL DEFAULT '1st Semester',
       teacher_id VARCHAR(40) NULL,
@@ -432,39 +402,10 @@ const ensureApplicationSchema = async () => {
   `);
 
   if (await tableExists("courses")) {
-    await ensureColumn("courses", "schedule", "VARCHAR(255) DEFAULT ''");
-    await trySchemaChange("courses.schedule length", "ALTER TABLE courses MODIFY schedule VARCHAR(255) DEFAULT ''");
     await ensureColumn("courses", "school_year", "VARCHAR(20) NOT NULL DEFAULT '2025-2026'");
     await ensureColumn("courses", "semester", "VARCHAR(40) NOT NULL DEFAULT '1st Semester'");
   }
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS grade_scales (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      label VARCHAR(20) NOT NULL,
-      min_score DECIMAL(5,2) NOT NULL,
-      max_score DECIMAL(5,2) NOT NULL,
-      description VARCHAR(255) DEFAULT '',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB
-  `);
-  await trySchemaChange("grade_scales unique label", "ALTER TABLE grade_scales ADD UNIQUE KEY unique_grade_scale_label (label)");
-  await trySchemaChange("grade_scales unique range", "ALTER TABLE grade_scales ADD UNIQUE KEY unique_grade_scale_range (min_score, max_score)");
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS audit_log (
-      log_id INT AUTO_INCREMENT PRIMARY KEY,
-      admin_id VARCHAR(40) NULL,
-      action VARCHAR(50) NOT NULL,
-      table_name VARCHAR(100) NOT NULL,
-      record_id VARCHAR(80) NOT NULL,
-      old_value TEXT,
-      new_value TEXT,
-      changed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB
-  `);
-
-  await trySchemaChange("audit_log.admin_id nullable", "ALTER TABLE audit_log MODIFY admin_id VARCHAR(40) NULL");
   await trySchemaChange("grades.semester default", "ALTER TABLE grades MODIFY semester VARCHAR(40) NOT NULL DEFAULT '1st Semester'");
   await trySchemaChange("teacher_assignments.semester default", "ALTER TABLE teacher_assignments MODIFY semester VARCHAR(40) NOT NULL DEFAULT '1st Semester'");
   await pool.query("UPDATE grades SET semester = '1st Semester' WHERE semester IN ('First Semester', 'Spring', 'Spring 2024')");
@@ -553,25 +494,6 @@ const ensureDefaultAdminAccount = async () => {
   console.info("Default admin account is ready: admin@school.com");
 };
 
-const writeAuditLog = async (req, action, tableName, recordId, oldValue = null, newValue = null) => {
-  try {
-    await pool.query(
-      `INSERT INTO audit_log (admin_id, action, table_name, record_id, old_value, new_value)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        req.user?.id || null,
-        action,
-        tableName,
-        String(recordId),
-        oldValue ? JSON.stringify(oldValue) : null,
-        newValue ? JSON.stringify(newValue) : null,
-      ]
-    );
-  } catch (error) {
-    safeLogError("Audit log write failed", error);
-  }
-};
-
 const isAssignedStudent = async (teacherId, studentId, subject = "") => {
   const params = [teacherId, studentId];
   let subjectFilter = "";
@@ -624,70 +546,6 @@ const getVisibleGrades = async (user) => {
   return rows;
 };
 
-const getVisibleAttendance = async (user) => {
-  const baseQuery = `SELECT
-      log_id AS id,
-      student_id AS studentId,
-      log_date AS date,
-      status
-    FROM attendance`;
-
-  if (user.role === "student") {
-    const [rows] = await pool.query(`${baseQuery} WHERE student_id = ? ORDER BY log_date DESC`, [user.id]);
-    return rows;
-  }
-
-  if (user.role === "teacher") {
-    const [rows] = await pool.query(
-      `${baseQuery}
-       WHERE student_id IN (SELECT student_id FROM teacher_assignments WHERE teacher_id = ?)
-       ORDER BY log_date DESC`,
-      [user.id]
-    );
-    return rows;
-  }
-
-  const [rows] = await pool.query(`${baseQuery} ORDER BY log_date DESC`);
-  return rows;
-};
-
-const buildClassAnalytics = (grades) => {
-  const gradesByStudent = grades.reduce((studentMap, grade) => {
-    const currentGrades = studentMap.get(grade.studentId) || [];
-    currentGrades.push(grade);
-    studentMap.set(grade.studentId, currentGrades);
-    return studentMap;
-  }, new Map());
-
-  const studentAverages = Array.from(gradesByStudent.entries()).map(([studentId, studentGrades]) => {
-    const average = studentGrades.reduce((total, grade) => total + Number(grade.score || 0), 0) / studentGrades.length;
-    return { studentId, average: Number(average.toFixed(2)) };
-  });
-
-  const classAverage = grades.length
-    ? Number((grades.reduce((total, grade) => total + Number(grade.score || 0), 0) / grades.length).toFixed(2))
-    : 0;
-  const distribution = { A: 0, B: 0, C: 0, D: 0, F: 0 };
-
-  grades.forEach((grade) => {
-    const score = Number(grade.score || 0);
-    if (score >= 90) distribution.A += 1;
-    else if (score >= 80) distribution.B += 1;
-    else if (score >= 75) distribution.C += 1;
-    else if (score >= 60) distribution.D += 1;
-    else distribution.F += 1;
-  });
-
-  const sortedAverages = [...studentAverages].sort((left, right) => right.average - left.average);
-
-  return {
-    classAverage,
-    distribution,
-    topPerformers: sortedAverages.slice(0, 5),
-    bottomPerformers: sortedAverages.slice(-5).reverse(),
-  };
-};
-
 app.get("/", (_req, res) => {
   res.send("API is running");
 });
@@ -708,10 +566,10 @@ const getUsers = async (req, res) => {
     const nameExpression = getUserNameExpression();
 
     if (req.user.role === "admin") {
-      [rows] = await pool.query(`SELECT id, email, ${nameExpression} AS name, role, course, school_year AS schoolYear, semester, profile_picture AS profilePicture FROM users ORDER BY name ASC`);
+      [rows] = await pool.query(`SELECT id, email, ${nameExpression} AS name, role, course, school_year AS schoolYear, semester FROM users ORDER BY name ASC`);
     } else if (req.user.role === "teacher") {
       [rows] = await pool.query(
-        `SELECT DISTINCT u.id, u.email, ${getUserNameExpression("u")} AS name, u.role, u.course, u.school_year AS schoolYear, u.semester, u.profile_picture AS profilePicture
+        `SELECT DISTINCT u.id, u.email, ${getUserNameExpression("u")} AS name, u.role, u.course, u.school_year AS schoolYear, u.semester
          FROM users u
          WHERE u.role = 'student'
            AND (
@@ -723,7 +581,7 @@ const getUsers = async (req, res) => {
       );
     } else {
       [rows] = await pool.query(
-        `SELECT id, email, ${nameExpression} AS name, role, course, school_year AS schoolYear, semester, profile_picture AS profilePicture FROM users WHERE id = ? LIMIT 1`,
+        `SELECT id, email, ${nameExpression} AS name, role, course, school_year AS schoolYear, semester FROM users WHERE id = ? LIMIT 1`,
         [req.user.id]
       );
     }
@@ -746,40 +604,6 @@ const getGrades = async (req, res) => {
 
 app.get("/api/session", requireAuth, (req, res) => {
   res.json(req.user);
-});
-
-app.put("/api/profile-picture", requireAuth, async (req, res) => {
-  if (!["teacher", "student"].includes(req.user.role)) {
-    return res.status(403).json({ message: "Only teacher and student accounts can update profile pictures" });
-  }
-
-  let profilePicture = "";
-
-  try {
-    profilePicture = sanitizeProfilePicture(req.body.profilePicture);
-  } catch (error) {
-    return res.status(400).json({ message: error.message || "Invalid profile picture" });
-  }
-
-  try {
-    await pool.query("UPDATE users SET profile_picture = ? WHERE id = ?", [profilePicture || null, req.user.id]);
-
-    const updatedUser = {
-      ...req.user,
-      profilePicture,
-    };
-    const session = sessions.get(req.sessionToken);
-
-    if (session) {
-      session.user = updatedUser;
-    }
-
-    await writeAuditLog(req, "UPDATE_PROFILE_PICTURE", "users", req.user.id, null, { id: req.user.id });
-    res.json(updatedUser);
-  } catch (error) {
-    safeLogError("Failed to update profile picture", error);
-    res.status(500).json({ message: "Failed to update profile picture" });
-  }
 });
 
 app.get("/api/users", requireAuth, getUsers);
@@ -815,7 +639,7 @@ app.post("/api/login", async (req, res) => {
   try {
     const nameExpression = getUserNameExpression();
     const [rows] = await pool.query(
-      `SELECT id, email, ${nameExpression} AS name, role, course, school_year AS schoolYear, semester, profile_picture AS profilePicture, password
+      `SELECT id, email, ${nameExpression} AS name, role, course, school_year AS schoolYear, semester, password
        FROM users
        WHERE ${field} = ? AND role = ?
        LIMIT 1`,
@@ -851,7 +675,6 @@ app.post("/api/login", async (req, res) => {
       course: user.course,
       schoolYear: user.schoolYear,
       semester: user.semester,
-      profilePicture: user.profilePicture || "",
     };
 
     const token = createSession(responseUser);
@@ -861,78 +684,6 @@ app.post("/api/login", async (req, res) => {
   } catch (error) {
     safeLogError("Login failed", error);
     res.status(500).json({ message: "Login failed" });
-  }
-});
-
-app.post("/api/register", async (req, res) => {
-  const {
-    studentId: rawStudentId,
-    email: rawEmail,
-    firstName: rawFirstName,
-    middleName: rawMiddleName,
-    lastName: rawLastName,
-    password,
-    confirmPassword,
-    role = "student",
-  } = req.body;
-  const studentId = normalizeIdentifier(rawStudentId);
-  const email = normalizeEmail(rawEmail);
-  const firstName = sanitizeText(rawFirstName, 60);
-  const middleName = sanitizeText(rawMiddleName, 60);
-  const lastName = sanitizeText(rawLastName, 60);
-  const normalizedRole = normalizeRole(role) === "teacher" ? "teacher" : "student";
-
-  if (!studentId || !email || !firstName || !lastName || !password) {
-    return res.status(400).json({ message: "Missing required registration fields" });
-  }
-
-  if (!isValidUserId(studentId)) {
-    return res.status(400).json({ message: "ID may only contain letters, numbers, spaces, hyphens, and underscores" });
-  }
-
-  if (!isValidEmail(email)) {
-    return res.status(400).json({ message: "Please enter a valid email address" });
-  }
-
-  if (confirmPassword !== undefined && password !== confirmPassword) {
-    return res.status(400).json({ message: "Passwords do not match" });
-  }
-
-  const passwordError = validatePassword(password);
-
-  if (passwordError) {
-    return res.status(400).json({ message: passwordError });
-  }
-
-  const fullName = [firstName, middleName, lastName].filter(Boolean).join(" ");
-  const passwordHash = hashPassword(password);
-
-  try {
-    const [existingUsers] = await pool.query(
-      "SELECT id FROM users WHERE id = ? OR email = ? LIMIT 1",
-      [studentId, email]
-    );
-
-    if (existingUsers.length > 0) {
-      return res.status(409).json({ message: "A user with that ID or email already exists" });
-    }
-
-    await pool.query(
-      `INSERT INTO users (id, email, firstname, lastname, name, role, password)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [studentId, email, firstName, lastName, fullName, normalizedRole, passwordHash]
-    );
-
-    res.status(201).json({
-      id: studentId,
-      email,
-      name: fullName,
-      role: normalizedRole,
-      profilePicture: "",
-    });
-  } catch (error) {
-    safeLogError("Registration failed", error);
-    res.status(500).json({ message: "Registration failed" });
   }
 });
 
@@ -1027,8 +778,14 @@ app.post("/api/grades", requireAuth, requireRole("admin", "teacher"), async (req
     return res.status(400).json({ message: "Invalid student ID format" });
   }
 
-  if (score < 0 || score > 100) {
-    return res.status(400).json({ message: "Score must be between 0 and 100" });
+  const usesCollegeGradeScale = req.user.role === "teacher";
+  const minimumGrade = usesCollegeGradeScale ? 1 : 0;
+  const maximumGrade = usesCollegeGradeScale ? 5 : 100;
+
+  if (score < minimumGrade || score > maximumGrade) {
+    return res.status(400).json({
+      message: usesCollegeGradeScale ? "Grade must be between 1.0 and 5.0" : "Score must be between 0 and 100"
+    });
   }
 
   try {
@@ -1062,7 +819,6 @@ app.post("/api/grades", requireAuth, requireRole("admin", "teacher"), async (req
       term,
     };
 
-    await writeAuditLog(req, "INSERT", "grades", result.insertId, null, createdGrade);
 
     res.status(201).json({
       ...createdGrade,
@@ -1090,10 +846,6 @@ app.put("/api/grades/:id", requireAuth, requireRole("admin", "teacher"), async (
     return res.status(400).json({ message: "Subject and score are required" });
   }
 
-  if (score < 0 || score > 100) {
-    return res.status(400).json({ message: "Score must be between 0 and 100" });
-  }
-
   try {
     const [existingRows] = await pool.query(
       `SELECT id, student_id AS studentId, subject, score, feedback, teacher_id AS teacherId, school_year AS schoolYear, semester, term
@@ -1108,6 +860,16 @@ app.put("/api/grades/:id", requireAuth, requireRole("admin", "teacher"), async (
 
     if (req.user.role === "teacher" && existingGrade.teacherId !== req.user.id) {
       return res.status(403).json({ message: "You can only edit grades you added" });
+    }
+
+    const usesCollegeGradeScale = req.user.role === "teacher" || Boolean(existingGrade.teacherId);
+    const minimumGrade = usesCollegeGradeScale ? 1 : 0;
+    const maximumGrade = usesCollegeGradeScale ? 5 : 100;
+
+    if (score < minimumGrade || score > maximumGrade) {
+      return res.status(400).json({
+        message: usesCollegeGradeScale ? "Grade must be between 1.0 and 5.0" : "Score must be between 0 and 100"
+      });
     }
 
     await pool.query(
@@ -1127,7 +889,6 @@ app.put("/api/grades/:id", requireAuth, requireRole("admin", "teacher"), async (
       term,
     };
 
-    await writeAuditLog(req, "UPDATE", "grades", gradeId, existingGrade, updatedGrade);
 
     res.json({
       ...updatedGrade,
@@ -1161,56 +922,10 @@ app.delete("/api/grades/:id", requireAuth, requireRole("admin", "teacher"), asyn
     }
 
     await pool.query("DELETE FROM grades WHERE id = ?", [gradeId]);
-    await writeAuditLog(req, "DELETE", "grades", gradeId, existingGrade, null);
     res.json({ ok: true });
   } catch (error) {
     safeLogError("Failed to delete grade", error);
     res.status(500).json({ message: "Failed to delete grade" });
-  }
-});
-
-app.get("/api/attendance", requireAuth, async (req, res) => {
-  try {
-    res.json(await getVisibleAttendance(req.user));
-  } catch (error) {
-    safeLogError("Failed to fetch attendance", error);
-    res.status(500).json({ message: "Failed to fetch attendance" });
-  }
-});
-
-app.post("/api/attendance", requireAuth, requireRole("admin", "teacher"), async (req, res) => {
-  const studentId = normalizeIdentifier(req.body.studentId);
-  const date = sanitizeText(req.body.date, 20);
-  const status = sanitizeText(req.body.status, 20).toLowerCase();
-
-  if (!studentId || !date || !["present", "absent", "late"].includes(status)) {
-    return res.status(400).json({ message: "studentId, date, and valid status are required" });
-  }
-
-  try {
-    if (req.user.role === "teacher" && !(await isAssignedStudent(req.user.id, studentId))) {
-      return res.status(403).json({ message: "You can only manage attendance for assigned students" });
-    }
-
-    const [result] = await pool.query(
-      "INSERT INTO attendance (student_id, log_date, status) VALUES (?, ?, ?)",
-      [studentId, date, status]
-    );
-    const createdRecord = { id: result.insertId, studentId, date, status };
-    await writeAuditLog(req, "INSERT", "attendance", result.insertId, null, createdRecord);
-    res.status(201).json(createdRecord);
-  } catch (error) {
-    safeLogError("Failed to create attendance record", error);
-    res.status(500).json({ message: "Failed to create attendance record" });
-  }
-});
-
-app.get("/api/analytics/class", requireAuth, requireRole("admin", "teacher"), async (req, res) => {
-  try {
-    res.json(buildClassAnalytics(await getVisibleGrades(req.user)));
-  } catch (error) {
-    safeLogError("Failed to build class analytics", error);
-    res.status(500).json({ message: "Failed to build class analytics" });
   }
 });
 
@@ -1220,7 +935,7 @@ app.post("/api/users", requireAuth, requireRole("admin"), async (req, res) => {
   const name = sanitizeText(req.body.name, 180);
   const role = normalizeRole(req.body.role);
   const password = String(req.body.password || "");
-  const course = role === "student" ? normalizeStudentProgram(req.body.course) : "";
+  const course = ["student", "teacher"].includes(role) ? normalizeStudentProgram(req.body.course) : "";
   const schoolYear = normalizeSchoolYear(req.body.schoolYear);
   const semester = normalizeSemester(req.body.semester);
 
@@ -1251,8 +966,7 @@ app.post("/api/users", requireAuth, requireRole("admin"), async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, email, firstName, lastName, name, role, hashPassword(password), course, schoolYear, semester]
     );
-    const createdUser = { id, email, name, role, course, schoolYear, semester, profilePicture: "" };
-    await writeAuditLog(req, "INSERT", "users", id, null, createdUser);
+    const createdUser = { id, email, name, role, course, schoolYear, semester };
     res.status(201).json(createdUser);
   } catch (error) {
     safeLogError("Failed to create user", error);
@@ -1265,7 +979,7 @@ app.put("/api/users/:id", requireAuth, requireRole("admin"), async (req, res) =>
   const email = normalizeEmail(req.body.email);
   const name = sanitizeText(req.body.name, 180);
   const role = normalizeRole(req.body.role);
-  const course = role === "student" ? normalizeStudentProgram(req.body.course) : "";
+  const course = ["student", "teacher"].includes(role) ? normalizeStudentProgram(req.body.course) : "";
   const schoolYear = normalizeSchoolYear(req.body.schoolYear);
   const semester = normalizeSemester(req.body.semester);
 
@@ -1281,7 +995,7 @@ app.put("/api/users/:id", requireAuth, requireRole("admin"), async (req, res) =>
   const lastName = remainingNames.join(" ") || firstName;
 
   try {
-    const [existingRows] = await pool.query(`SELECT id, email, ${getUserNameExpression()} AS name, role, course, school_year AS schoolYear, semester, profile_picture AS profilePicture FROM users WHERE id = ? LIMIT 1`, [id]);
+    const [existingRows] = await pool.query(`SELECT id, email, ${getUserNameExpression()} AS name, role, course, school_year AS schoolYear, semester FROM users WHERE id = ? LIMIT 1`, [id]);
 
     if (existingRows.length === 0) {
       return res.status(404).json({ message: "User not found" });
@@ -1291,8 +1005,7 @@ app.put("/api/users/:id", requireAuth, requireRole("admin"), async (req, res) =>
       "UPDATE users SET email = ?, firstname = ?, lastname = ?, name = ?, role = ?, course = ?, school_year = ?, semester = ? WHERE id = ?",
       [email, firstName, lastName, name, role, course, schoolYear, semester, id]
     );
-    const updatedUser = { id, email, name, role, course, schoolYear, semester, profilePicture: existingRows[0].profilePicture || "" };
-    await writeAuditLog(req, "UPDATE", "users", id, existingRows[0], updatedUser);
+    const updatedUser = { id, email, name, role, course, schoolYear, semester };
     res.json(updatedUser);
   } catch (error) {
     safeLogError("Failed to update user", error);
@@ -1314,14 +1027,12 @@ app.delete("/api/users/:id", requireAuth, requireRole("admin"), async (req, res)
       return res.status(404).json({ message: "User not found" });
     }
 
-    await pool.query("DELETE FROM attendance WHERE student_id = ?", [id]);
     await pool.query("DELETE FROM grades WHERE student_id = ?", [id]);
     await pool.query("UPDATE grades SET teacher_id = NULL WHERE teacher_id = ?", [id]);
     await pool.query("UPDATE subjects SET teacher_id = NULL WHERE teacher_id = ?", [id]);
     await pool.query("UPDATE courses SET teacher_id = NULL WHERE teacher_id = ?", [id]);
     await pool.query("DELETE FROM teacher_assignments WHERE teacher_id = ? OR student_id = ?", [id, id]);
     await pool.query("DELETE FROM users WHERE id = ?", [id]);
-    await writeAuditLog(req, "DELETE", "users", id, existingRows[0], null);
     res.json({ ok: true });
   } catch (error) {
     safeLogError("Failed to delete user", error);
@@ -1340,7 +1051,6 @@ app.post("/api/users/:id/reset-password", requireAuth, requireRole("admin"), asy
 
   try {
     await pool.query("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]);
-    await writeAuditLog(req, "RESET_PASSWORD", "users", id, null, { id });
     res.json({ message: "Password reset successfully" });
   } catch (error) {
     safeLogError("Failed to reset password", error);
@@ -1398,7 +1108,6 @@ app.post("/api/teacher-assignments", requireAuth, requireRole("admin"), async (r
       [teacherId, studentId, subject, course, section, schoolYear, semester]
     );
     const assignment = { id: result.insertId, teacherId, studentId, subject, course, section, schoolYear, semester };
-    await writeAuditLog(req, "UPSERT", "teacher_assignments", result.insertId || `${teacherId}:${studentId}:${subject}`, null, assignment);
     res.status(201).json(assignment);
   } catch (error) {
     safeLogError("Failed to save teacher assignment", error);
@@ -1415,7 +1124,6 @@ app.delete("/api/teacher-assignments/:id", requireAuth, requireRole("admin"), as
 
   try {
     await pool.query("DELETE FROM teacher_assignments WHERE id = ?", [assignmentId]);
-    await writeAuditLog(req, "DELETE", "teacher_assignments", assignmentId);
     res.json({ ok: true });
   } catch (error) {
     safeLogError("Failed to delete teacher assignment", error);
@@ -1425,7 +1133,7 @@ app.delete("/api/teacher-assignments/:id", requireAuth, requireRole("admin"), as
 
 app.get("/api/courses", requireAuth, async (_req, res) => {
   try {
-    const [rows] = await pool.query("SELECT id, code, name, description, schedule, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses ORDER BY name ASC");
+    const [rows] = await pool.query("SELECT id, code, name, description, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses ORDER BY name ASC");
     res.json(rows);
   } catch (error) {
     safeLogError("Failed to fetch courses", error);
@@ -1433,23 +1141,18 @@ app.get("/api/courses", requireAuth, async (_req, res) => {
   }
 });
 
-const findConflictingCourse = async ({ code, name, schedule, schoolYear, semester, teacherId, excludeId = null }) => {
+const findConflictingCourse = async ({ code, name, schoolYear, semester, excludeId = null }) => {
   const params = [code, name, schoolYear, semester];
-  const scheduleClause = schedule && teacherId ? " OR (teacher_id = ? AND LOWER(schedule) = LOWER(?))" : "";
   const excludeClause = excludeId ? " AND id <> ?" : "";
-
-  if (schedule && teacherId) {
-    params.push(teacherId, schedule);
-  }
 
   if (excludeId) {
     params.push(excludeId);
   }
 
   const [rows] = await pool.query(
-    `SELECT id, code, name, schedule, school_year AS schoolYear, semester, teacher_id AS teacherId
+    `SELECT id, code, name, school_year AS schoolYear, semester, teacher_id AS teacherId
      FROM courses
-     WHERE (UPPER(code) = UPPER(?) OR (LOWER(name) = LOWER(?) AND school_year = ? AND semester = ?)${scheduleClause})${excludeClause}
+     WHERE (UPPER(code) = UPPER(?) OR (LOWER(name) = LOWER(?) AND school_year = ? AND semester = ?))${excludeClause}
      LIMIT 1`,
     params
   );
@@ -1457,17 +1160,13 @@ const findConflictingCourse = async ({ code, name, schedule, schoolYear, semeste
   return rows[0] || null;
 };
 
-const getCourseConflictMessage = (conflict, { code, name, schedule, teacherId }) => {
+const getCourseConflictMessage = (conflict, { code, name }) => {
   if (String(conflict.code || "").toUpperCase() === code) {
     return `Duplicate course code "${code}" is not allowed.`;
   }
 
   if (String(conflict.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase()) {
     return `Duplicate course title "${name}" for this term is not allowed.`;
-  }
-
-  if (schedule && teacherId && String(conflict.teacherId || "") === teacherId && String(conflict.schedule || "").trim().toLowerCase() === String(schedule).trim().toLowerCase()) {
-    return "Duplicate schedule for this teacher is not allowed.";
   }
 
   return "Duplicate course input is not allowed.";
@@ -1477,7 +1176,6 @@ app.post("/api/courses", requireAuth, requireRole("admin"), async (req, res) => 
   const code = sanitizeText(req.body.code, 40).toUpperCase();
   const name = sanitizeText(req.body.name, 120);
   const description = sanitizeText(req.body.description, 255);
-  const schedule = sanitizeText(req.body.schedule, 255);
   const schoolYear = normalizeSchoolYear(req.body.schoolYear);
   const semester = normalizeSemester(req.body.semester);
   const teacherId = normalizeIdentifier(req.body.teacherId);
@@ -1487,18 +1185,17 @@ app.post("/api/courses", requireAuth, requireRole("admin"), async (req, res) => 
   }
 
   try {
-    const conflict = await findConflictingCourse({ code, name, schedule, schoolYear, semester, teacherId });
+    const conflict = await findConflictingCourse({ code, name, schoolYear, semester });
 
     if (conflict) {
-      return res.status(409).json({ message: getCourseConflictMessage(conflict, { code, name, schedule, teacherId }) });
+      return res.status(409).json({ message: getCourseConflictMessage(conflict, { code, name }) });
     }
 
     const [result] = await pool.query(
-      "INSERT INTO courses (code, name, description, schedule, school_year, semester, teacher_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [code, name, description, schedule, schoolYear, semester, teacherId || null]
+      "INSERT INTO courses (code, name, description, school_year, semester, teacher_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [code, name, description, schoolYear, semester, teacherId || null]
     );
-    const course = { id: result.insertId, code, name, description, schedule, schoolYear, semester, teacherId: teacherId || null };
-    await writeAuditLog(req, "INSERT", "courses", result.insertId, null, course);
+    const course = { id: result.insertId, code, name, description, schoolYear, semester, teacherId: teacherId || null };
     res.status(201).json(course);
   } catch (error) {
     safeLogError("Failed to create course", error);
@@ -1511,7 +1208,6 @@ app.put("/api/courses/:id", requireAuth, requireRole("admin"), async (req, res) 
   const code = sanitizeText(req.body.code, 40).toUpperCase();
   const name = sanitizeText(req.body.name, 120);
   const description = sanitizeText(req.body.description, 255);
-  const schedule = sanitizeText(req.body.schedule, 255);
   const schoolYear = normalizeSchoolYear(req.body.schoolYear);
   const semester = normalizeSemester(req.body.semester);
   const teacherId = normalizeIdentifier(req.body.teacherId);
@@ -1525,25 +1221,24 @@ app.put("/api/courses/:id", requireAuth, requireRole("admin"), async (req, res) 
   }
 
   try {
-    const [existingRows] = await pool.query("SELECT id, code, name, description, schedule, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses WHERE id = ? LIMIT 1", [courseId]);
+    const [existingRows] = await pool.query("SELECT id, code, name, description, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses WHERE id = ? LIMIT 1", [courseId]);
 
     if (existingRows.length === 0) {
       return res.status(404).json({ message: "Course not found" });
     }
 
-    const conflict = await findConflictingCourse({ code, name, schedule, schoolYear, semester, teacherId, excludeId: courseId });
+    const conflict = await findConflictingCourse({ code, name, schoolYear, semester, excludeId: courseId });
 
     if (conflict) {
-      return res.status(409).json({ message: getCourseConflictMessage(conflict, { code, name, schedule, teacherId }) });
+      return res.status(409).json({ message: getCourseConflictMessage(conflict, { code, name }) });
     }
 
     await pool.query(
-      "UPDATE courses SET code = ?, name = ?, description = ?, schedule = ?, school_year = ?, semester = ?, teacher_id = ? WHERE id = ?",
-      [code, name, description, schedule, schoolYear, semester, teacherId || null, courseId]
+      "UPDATE courses SET code = ?, name = ?, description = ?, school_year = ?, semester = ?, teacher_id = ? WHERE id = ?",
+      [code, name, description, schoolYear, semester, teacherId || null, courseId]
     );
 
-    const course = { id: courseId, code, name, description, schedule, schoolYear, semester, teacherId: teacherId || null };
-    await writeAuditLog(req, "UPDATE", "courses", courseId, existingRows[0], course);
+    const course = { id: courseId, code, name, description, schoolYear, semester, teacherId: teacherId || null };
     res.json(course);
   } catch (error) {
     if (error?.code === "ER_DUP_ENTRY") {
@@ -1563,14 +1258,13 @@ app.delete("/api/courses/:id", requireAuth, requireRole("admin"), async (req, re
   }
 
   try {
-    const [existingRows] = await pool.query("SELECT id, code, name, description, schedule, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses WHERE id = ? LIMIT 1", [courseId]);
+    const [existingRows] = await pool.query("SELECT id, code, name, description, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses WHERE id = ? LIMIT 1", [courseId]);
 
     if (existingRows.length === 0) {
       return res.status(404).json({ message: "Course not found" });
     }
 
     await pool.query("DELETE FROM courses WHERE id = ?", [courseId]);
-    await writeAuditLog(req, "DELETE", "courses", courseId, existingRows[0], null);
     res.json({ ok: true });
   } catch (error) {
     safeLogError("Failed to delete course", error);
@@ -1599,7 +1293,6 @@ app.post("/api/subjects", requireAuth, requireRole("admin"), async (req, res) =>
   try {
     const [result] = await pool.query("INSERT INTO subjects (subject_name, teacher_id) VALUES (?, ?)", [name, teacherId]);
     const subject = { id: result.insertId, name, teacherId };
-    await writeAuditLog(req, "INSERT", "subjects", result.insertId, null, subject);
     res.status(201).json(subject);
   } catch (error) {
     safeLogError("Failed to create subject", error);
@@ -1607,196 +1300,26 @@ app.post("/api/subjects", requireAuth, requireRole("admin"), async (req, res) =>
   }
 });
 
-app.get("/api/grade-scales", requireAuth, async (_req, res) => {
-  try {
-    const [rows] = await pool.query(
-      "SELECT id, label, min_score AS minScore, max_score AS maxScore, description FROM grade_scales ORDER BY min_score DESC"
-    );
-    res.json(rows);
-  } catch (error) {
-    safeLogError("Failed to fetch grade scales", error);
-    res.status(500).json({ message: "Failed to fetch grade scales" });
-  }
-});
-
-const findConflictingGradeScale = async ({ label, minScore, maxScore, excludeId = null }) => {
-  const params = [label, minScore, maxScore, maxScore, minScore];
-  const excludeClause = excludeId ? " AND id <> ?" : "";
-
-  if (excludeId) {
-    params.push(excludeId);
-  }
-
-  const [rows] = await pool.query(
-    `SELECT id, label, min_score AS minScore, max_score AS maxScore FROM grade_scales
-     WHERE (LOWER(label) = LOWER(?) OR (min_score = ? AND max_score = ?) OR (min_score <= ? AND max_score >= ?))${excludeClause}
-     LIMIT 1`,
-    params
-  );
-
-  return rows[0] || null;
-};
-
-const getGradeScaleConflictMessage = (conflict, { label, minScore, maxScore }) => {
-  if (String(conflict.label || "").trim().toLowerCase() === String(label || "").trim().toLowerCase()) {
-    return `Duplicate grade label "${label}" is not allowed.`;
-  }
-
-  if (Number(conflict.minScore) === Number(minScore) && Number(conflict.maxScore) === Number(maxScore)) {
-    return `Duplicate score range ${minScore} - ${maxScore}% is not allowed.`;
-  }
-
-  return `Score range ${minScore} - ${maxScore}% overlaps with "${conflict.label}".`;
-};
-
-app.post("/api/grade-scales", requireAuth, requireRole("admin"), async (req, res) => {
-  const label = sanitizeText(req.body.label, 20);
-  const minScore = Number(req.body.minScore);
-  const maxScore = Number(req.body.maxScore);
-  const description = sanitizeText(req.body.description, 255);
-
-  if (!label || !Number.isFinite(minScore) || !Number.isFinite(maxScore)) {
-    return res.status(400).json({ message: "Grade label, min score, and max score are required" });
-  }
-
-  if (minScore < 0 || maxScore > 100 || minScore > maxScore) {
-    return res.status(400).json({ message: "Grade scale ranges must stay between 0 and 100, with minimum not higher than maximum" });
-  }
-
-  try {
-    const conflict = await findConflictingGradeScale({ label, minScore, maxScore });
-
-    if (conflict) {
-      return res.status(409).json({ message: getGradeScaleConflictMessage(conflict, { label, minScore, maxScore }) });
-    }
-
-    const [result] = await pool.query(
-      "INSERT INTO grade_scales (label, min_score, max_score, description) VALUES (?, ?, ?, ?)",
-      [label, minScore, maxScore, description]
-    );
-    const scale = { id: result.insertId, label, minScore, maxScore, description };
-    await writeAuditLog(req, "INSERT", "grade_scales", result.insertId, null, scale);
-    res.status(201).json(scale);
-  } catch (error) {
-    safeLogError("Failed to create grade scale", error);
-    res.status(500).json({ message: "Failed to create grade scale" });
-  }
-});
-
-app.put("/api/grade-scales/:id", requireAuth, requireRole("admin"), async (req, res) => {
-  const scaleId = Number(req.params.id);
-  const label = sanitizeText(req.body.label, 20);
-  const minScore = Number(req.body.minScore);
-  const maxScore = Number(req.body.maxScore);
-  const description = sanitizeText(req.body.description, 255);
-
-  if (!Number.isInteger(scaleId) || scaleId <= 0) {
-    return res.status(400).json({ message: "Valid grade scale ID is required" });
-  }
-
-  if (!label || !Number.isFinite(minScore) || !Number.isFinite(maxScore)) {
-    return res.status(400).json({ message: "Grade label, min score, and max score are required" });
-  }
-
-  if (minScore < 0 || maxScore > 100 || minScore > maxScore) {
-    return res.status(400).json({ message: "Grade scale ranges must stay between 0 and 100, with minimum not higher than maximum" });
-  }
-
-  try {
-    const [existingRows] = await pool.query(
-      "SELECT id, label, min_score AS minScore, max_score AS maxScore, description FROM grade_scales WHERE id = ?",
-      [scaleId]
-    );
-
-    if (!existingRows.length) {
-      return res.status(404).json({ message: "Grade scale not found" });
-    }
-
-    const conflict = await findConflictingGradeScale({ label, minScore, maxScore, excludeId: scaleId });
-
-    if (conflict) {
-      return res.status(409).json({ message: getGradeScaleConflictMessage(conflict, { label, minScore, maxScore }) });
-    }
-
-    await pool.query(
-      "UPDATE grade_scales SET label = ?, min_score = ?, max_score = ?, description = ? WHERE id = ?",
-      [label, minScore, maxScore, description, scaleId]
-    );
-
-    const scale = { id: scaleId, label, minScore, maxScore, description };
-    await writeAuditLog(req, "UPDATE", "grade_scales", scaleId, existingRows[0], scale);
-    res.json(scale);
-  } catch (error) {
-    safeLogError("Failed to update grade scale", error);
-    res.status(500).json({ message: "Failed to update grade scale" });
-  }
-});
-
-app.delete("/api/grade-scales/:id", requireAuth, requireRole("admin"), async (req, res) => {
-  const scaleId = Number(req.params.id);
-
-  if (!Number.isInteger(scaleId) || scaleId <= 0) {
-    return res.status(400).json({ message: "Valid grade scale ID is required" });
-  }
-
-  try {
-    const [existingRows] = await pool.query(
-      "SELECT id, label, min_score AS minScore, max_score AS maxScore, description FROM grade_scales WHERE id = ?",
-      [scaleId]
-    );
-
-    if (!existingRows.length) {
-      return res.status(404).json({ message: "Grade scale not found" });
-    }
-
-    await pool.query("DELETE FROM grade_scales WHERE id = ?", [scaleId]);
-    await writeAuditLog(req, "DELETE", "grade_scales", scaleId, existingRows[0], null);
-    res.json({ ok: true });
-  } catch (error) {
-    safeLogError("Failed to delete grade scale", error);
-    res.status(500).json({ message: "Failed to delete grade scale" });
-  }
-});
-
-app.get("/api/audit-logs", requireAuth, requireRole("admin"), async (_req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT log_id AS id, admin_id AS adminId, action, table_name AS tableName, record_id AS recordId, old_value AS oldValue, new_value AS newValue, changed_at AS changedAt
-       FROM audit_log
-       ORDER BY changed_at DESC
-       LIMIT 100`
-    );
-    res.json(rows);
-  } catch (error) {
-    safeLogError("Failed to fetch audit logs", error);
-    res.status(500).json({ message: "Failed to fetch audit logs" });
-  }
-});
-
 app.get("/api/backup", requireAuth, requireRole("admin"), async (_req, res) => {
   try {
-    const [users] = await pool.query(`SELECT id, email, ${getUserNameExpression()} AS name, role, course, school_year AS schoolYear, semester, profile_picture AS profilePicture, password AS passwordHash FROM users ORDER BY id ASC`);
+    const [users] = await pool.query(`SELECT id, email, ${getUserNameExpression()} AS name, role, course, school_year AS schoolYear, semester, password AS passwordHash FROM users ORDER BY id ASC`);
     const [grades] = await pool.query(
       `SELECT id, student_id AS studentId, subject, score, feedback, teacher_id AS teacherId, school_year AS schoolYear, semester, term
        FROM grades ORDER BY id ASC`
     );
-    const [attendance] = await pool.query("SELECT log_id AS id, student_id AS studentId, log_date AS date, status FROM attendance ORDER BY log_id ASC");
     const [assignments] = await pool.query(
       "SELECT id, teacher_id AS teacherId, student_id AS studentId, subject, course, section, school_year AS schoolYear, semester FROM teacher_assignments ORDER BY id ASC"
     );
-    const [courses] = await pool.query("SELECT id, code, name, description, schedule, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses ORDER BY id ASC");
+    const [courses] = await pool.query("SELECT id, code, name, description, school_year AS schoolYear, semester, teacher_id AS teacherId FROM courses ORDER BY id ASC");
     const [subjects] = await pool.query("SELECT subject_id AS id, subject_name AS name, teacher_id AS teacherId FROM subjects ORDER BY subject_id ASC");
-    const [gradeScales] = await pool.query("SELECT id, label, min_score AS minScore, max_score AS maxScore, description FROM grade_scales ORDER BY id ASC");
 
     res.json({
       exportedAt: new Date().toISOString(),
       users,
       grades,
-      attendance,
       assignments,
       courses,
       subjects,
-      gradeScales,
     });
   } catch (error) {
     safeLogError("Backup failed", error);
@@ -1815,10 +1338,8 @@ app.post("/api/restore", requireAuth, requireRole("admin"), async (req, res) => 
     const users = Array.isArray(snapshot.users) ? snapshot.users : [];
     const subjects = Array.isArray(snapshot.subjects) ? snapshot.subjects : [];
     const grades = Array.isArray(snapshot.grades) ? snapshot.grades : [];
-    const attendance = Array.isArray(snapshot.attendance) ? snapshot.attendance : [];
     const assignments = Array.isArray(snapshot.assignments) ? snapshot.assignments : [];
     const courses = Array.isArray(snapshot.courses) ? snapshot.courses : [];
-    const gradeScales = Array.isArray(snapshot.gradeScales) ? snapshot.gradeScales : [];
 
     for (const user of users) {
       const id = normalizeIdentifier(user.id);
@@ -1832,35 +1353,26 @@ app.post("/api/restore", requireAuth, requireRole("admin"), async (req, res) => 
 
       const [firstName, ...remainingNames] = name.split(" ");
       const lastName = remainingNames.join(" ") || firstName;
-      const course = role === "student" ? normalizeStudentProgram(user.course) : "";
+      const course = ["student", "teacher"].includes(role) ? normalizeStudentProgram(user.course) : "";
       const schoolYear = normalizeSchoolYear(user.schoolYear);
       const semester = normalizeSemester(user.semester);
-      let profilePicture = "";
-
-      try {
-        profilePicture = sanitizeProfilePicture(user.profilePicture);
-      } catch {
-        profilePicture = "";
-      }
-
       await pool.query(
-        `INSERT INTO users (id, email, firstname, lastname, name, role, password, course, school_year, semester, profile_picture)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE email = VALUES(email), firstname = VALUES(firstname), lastname = VALUES(lastname), name = VALUES(name), role = VALUES(role), course = VALUES(course), school_year = VALUES(school_year), semester = VALUES(semester), profile_picture = VALUES(profile_picture)`,
-        [id, email, firstName, lastName, name, role, user.passwordHash || hashPassword("Temp@123"), course, schoolYear, semester, profilePicture || null]
+        `INSERT INTO users (id, email, firstname, lastname, name, role, password, course, school_year, semester)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE email = VALUES(email), firstname = VALUES(firstname), lastname = VALUES(lastname), name = VALUES(name), role = VALUES(role), course = VALUES(course), school_year = VALUES(school_year), semester = VALUES(semester)`,
+        [id, email, firstName, lastName, name, role, user.passwordHash || hashPassword("Temp@123"), course, schoolYear, semester]
       );
     }
 
     for (const course of courses) {
       await pool.query(
-        `INSERT INTO courses (code, name, description, schedule, school_year, semester, teacher_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), schedule = VALUES(schedule), school_year = VALUES(school_year), semester = VALUES(semester), teacher_id = VALUES(teacher_id)`,
+        `INSERT INTO courses (code, name, description, school_year, semester, teacher_id)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), school_year = VALUES(school_year), semester = VALUES(semester), teacher_id = VALUES(teacher_id)`,
         [
           sanitizeText(course.code, 40).toUpperCase(),
           sanitizeText(course.name, 120),
           sanitizeText(course.description, 255),
-          sanitizeText(course.schedule, 255),
           normalizeSchoolYear(course.schoolYear),
           normalizeSemester(course.semester),
           normalizeIdentifier(course.teacherId) || null,
@@ -1884,13 +1396,6 @@ app.post("/api/restore", requireAuth, requireRole("admin"), async (req, res) => 
       if (existingSubjects.length === 0) {
         await pool.query("INSERT INTO subjects (subject_name, teacher_id) VALUES (?, ?)", [name, teacherId]);
       }
-    }
-
-    for (const scale of gradeScales) {
-      await pool.query(
-        "INSERT INTO grade_scales (label, min_score, max_score, description) VALUES (?, ?, ?, ?)",
-        [sanitizeText(scale.label, 20), Number(scale.minScore), Number(scale.maxScore), sanitizeText(scale.description, 255)]
-      );
     }
 
     for (const assignment of assignments) {
@@ -1937,34 +1442,14 @@ app.post("/api/restore", requireAuth, requireRole("admin"), async (req, res) => 
       );
     }
 
-    for (const record of attendance) {
-      const studentId = normalizeIdentifier(record.studentId);
-      const status = sanitizeText(record.status, 20).toLowerCase();
-      const date = sanitizeText(record.date, 20);
-
-      if (!studentId || !date || !["present", "absent", "late"].includes(status)) {
-        continue;
-      }
-
-      await pool.query(
-        `INSERT INTO attendance (log_id, student_id, log_date, status)
-         VALUES (?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE student_id = VALUES(student_id), log_date = VALUES(log_date), status = VALUES(status)`,
-        [Number.isInteger(Number(record.id)) ? Number(record.id) : null, studentId, date, status]
-      );
-    }
-
     const restored = {
       users: users.length,
       courses: courses.length,
       subjects: subjects.length,
-      gradeScales: gradeScales.length,
       assignments: assignments.length,
       grades: grades.length,
-      attendance: attendance.length,
     };
 
-    await writeAuditLog(req, "RESTORE", "backup", "snapshot", null, restored);
     res.json({ message: "Backup snapshot restored", restored });
   } catch (error) {
     safeLogError("Restore failed", error);

@@ -1,144 +1,125 @@
-import React, { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useStatusToast } from '../hooks/useNotifications';
-import { LoadingSpinner, StatusMessage } from '../components/ui';
+import { LoadingSpinner } from '../components/ui';
 import { exportStructuredPdf } from '../utils/pdfExport';
 import './StudentGrades.css';
 
-const getLetterGrade = (score = 0) => {
-  if (score >= 94) return 'A';
-  if (score >= 90) return 'A-';
-  if (score >= 87) return 'B+';
-  if (score >= 80) return 'B';
-  if (score >= 75) return 'C';
-  return 'F';
+const GRADE_TERMS = [
+  { key: 'prelim', label: 'Prelim' },
+  { key: 'midterm', label: 'Midterm' },
+  { key: 'finals', label: 'Finals' },
+];
+
+const getGradeTermKey = (term) => {
+  const normalizedTerm = String(term || '').trim().toLowerCase();
+  if (normalizedTerm.startsWith('prelim')) return 'prelim';
+  if (normalizedTerm.includes('midterm')) return 'midterm';
+  if (normalizedTerm.startsWith('final')) return 'finals';
+  return null;
 };
 
-const getAverage = (items) => {
-  if (items.length === 0) return 0;
-
-  return items.reduce((total, grade) => total + Number(grade.score || 0), 0) / items.length;
-};
+const formatGradeValue = (grade) => Number(grade.score).toFixed(1) + (grade.teacherId ? '' : ' / 100');
 
 const StudentGrades = () => {
-  const { user, grades, users, teacherAssignments } = useAuth();
-  const reportRef = useRef(null);
+  const { user, grades } = useAuth();
   const [selectedSchoolYear, setSelectedSchoolYear] = useState('All');
   const [selectedSemester, setSelectedSemester] = useState('All');
+  const [selectedFeedback, setSelectedFeedback] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
-  useStatusToast(statusMessage, 'success', 'Report ready');
-  useStatusToast(errorMessage, 'error', 'Download issue');
+  const [reportToast, setReportToast] = useState('');
+  const [reportErrorToast, setReportErrorToast] = useState('');
+  const feedbackDialogRef = useRef(null);
+  useStatusToast(reportToast, 'success', 'Report ready');
+  useStatusToast(reportErrorToast, 'error', 'Download issue');
 
-  const studentGrades = useMemo(() => grades.filter((grade) => grade.studentId === user.id), [grades, user.id]);
-  const studentAssignments = useMemo(() => teacherAssignments.filter((assignment) => assignment.studentId === user.id), [teacherAssignments, user.id]);
-  const assignedRows = useMemo(() => {
-    const gradedSubjectKeys = new Set(studentGrades.map((grade) => `${grade.subject}|${grade.schoolYear || ''}|${grade.semester || ''}`));
+  useEffect(() => {
+    const feedbackDialog = feedbackDialogRef.current;
+    if (selectedFeedback && feedbackDialog && !feedbackDialog.open) {
+      feedbackDialog.showModal();
+    } else if (!selectedFeedback && feedbackDialog?.open) {
+      feedbackDialog.close();
+    }
+  }, [selectedFeedback]);
 
-    return studentAssignments
-      .filter((assignment) => !gradedSubjectKeys.has(`${assignment.subject}|${assignment.schoolYear || ''}|${assignment.semester || ''}`))
-      .map((assignment) => ({
-        id: `assignment-${assignment.id || `${assignment.teacherId}-${assignment.subject}`}`,
-        subject: assignment.subject,
-        score: null,
-        feedback: 'Not graded yet',
-        teacherName: users.find((currentUser) => currentUser.id === assignment.teacherId)?.name || assignment.teacherId,
-        schoolYear: assignment.schoolYear || '2025-2026',
-        semester: assignment.semester || '1st Semester',
-        term: 'Pending',
-        isAssignedOnly: true,
-      }));
-  }, [studentAssignments, studentGrades, users]);
-  const subjectRows = [...studentGrades, ...assignedRows];
-  const schoolYears = [...new Set(subjectRows.map((row) => row.schoolYear || '2025-2026'))];
-  const semesters = [...new Set(subjectRows.map((row) => row.semester || '1st Semester'))];
-  const displayGrades = studentGrades.filter((grade) => {
-    const gradeSchoolYear = grade.schoolYear || '2025-2026';
-    const gradeSemester = grade.semester || '1st Semester';
+  const studentGrades = useMemo(() => grades
+    .filter((grade) => grade.studentId === user.id)
+    .sort((left, right) => Number(right.id) - Number(left.id)), [grades, user.id]);
+  const schoolYears = [...new Set(studentGrades.map((grade) => grade.schoolYear || '2025-2026'))];
+  const semesters = [...new Set([
+    '1st Semester',
+    '2nd Semester',
+    ...studentGrades.map((grade) => grade.semester || '1st Semester'),
+  ])];
+  const visibleGrades = useMemo(() => studentGrades.filter((grade) => (
+    (selectedSchoolYear === 'All' || (grade.schoolYear || '2025-2026') === selectedSchoolYear)
+    && (selectedSemester === 'All' || (grade.semester || '1st Semester') === selectedSemester)
+  )), [studentGrades, selectedSchoolYear, selectedSemester]);
 
-    return (selectedSchoolYear === 'All' || gradeSchoolYear === selectedSchoolYear)
-      && (selectedSemester === 'All' || gradeSemester === selectedSemester);
-  });
-  const displayAssignedRows = assignedRows.filter((row) => {
-    return (selectedSchoolYear === 'All' || row.schoolYear === selectedSchoolYear)
-      && (selectedSemester === 'All' || row.semester === selectedSemester);
-  });
-  const displayRows = [...displayGrades, ...displayAssignedRows];
-  const averageScore = getAverage(displayGrades);
-  const cumulativeGpa = displayGrades.length ? (averageScore / 25).toFixed(1) : '0.0';
-  const academicStatus = displayGrades.length ? (averageScore >= 75 ? 'Passed' : 'At Risk') : 'No Grades';
-  const activeSubjects = new Set(displayRows.map((row) => row.subject)).size;
-  const selectedGrade = displayRows[0];
-  const gradeHistory = Object.values(studentGrades.reduce((groups, grade) => {
-    const key = `${grade.schoolYear || '2025-2026'}|${grade.semester || '1st Semester'}|${grade.term || 'All Terms'}`;
-    const currentGroup = groups[key] || {
-      key,
-      schoolYear: grade.schoolYear || '2025-2026',
-      semester: grade.semester || '1st Semester',
-      term: grade.term || 'All Terms',
-      grades: [],
-    };
+  const gradeGroups = useMemo(() => {
+    const groups = new Map();
+    visibleGrades.forEach((grade) => {
+      const schoolYear = grade.schoolYear || '2025-2026';
+      const semester = grade.semester || '1st Semester';
+      const groupKey = JSON.stringify([grade.subject, schoolYear, semester]);
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          id: groupKey,
+          subject: grade.subject,
+          schoolYear,
+          semester,
+          terms: {},
+        });
+      }
 
-    currentGroup.grades.push(grade);
-    groups[key] = currentGroup;
-    return groups;
-  }, {})).map((group) => ({
-    ...group,
-    average: getAverage(group.grades),
-  }));
+      const termKey = getGradeTermKey(grade.term || 'Prelim');
+      const group = groups.get(groupKey);
+      const currentTermGrade = termKey ? group.terms[termKey] : null;
+      if (termKey && (!currentTermGrade || Number(grade.id) > Number(currentTermGrade.id))) {
+        group.terms[termKey] = grade;
+      }
+    });
+    return [...groups.values()];
+  }, [visibleGrades]);
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleDownloadReport = async () => {
+  const handleDownloadReport = () => {
     try {
       setIsDownloading(true);
-      setStatusMessage('');
-      setErrorMessage('');
+      setReportToast('');
+      setReportErrorToast('');
       exportStructuredPdf({
         filename: `Grade_Report_${user.id}.pdf`,
         title: `Grade Report - ${user.name}`,
-        subtitle: 'Student academic summary generated from recorded grade data.',
         meta: [
           { label: 'Student ID', value: user.id },
           { label: 'School Year', value: selectedSchoolYear },
           { label: 'Semester', value: selectedSemester },
         ],
-        summary: [
-          { label: 'Cumulative GPA', value: cumulativeGpa },
-          { label: 'Active Subjects', value: activeSubjects },
-          { label: 'Academic Status', value: academicStatus },
-        ],
-        sections: [
-          {
-            title: 'Subject Grades',
-            columns: [
-              { header: 'Subject', accessor: 'subject', width: 1.3 },
-              { header: 'Score', accessor: (grade) => (grade.isAssignedOnly ? 'Not graded yet' : `${Number(grade.score).toFixed(1)}/100`), width: 0.8 },
-              { header: 'Grade', accessor: (grade) => (grade.isAssignedOnly ? 'Pending' : getLetterGrade(Number(grade.score))), width: 0.7 },
-              { header: 'Feedback', accessor: (grade) => grade.feedback || 'No feedback yet', width: 1.6 },
-            ],
-            rows: displayRows,
-            emptyMessage: 'No subjects match the selected term.',
-          },
-          {
-            title: 'Grade History',
-            columns: [
-              { header: 'School Year', accessor: 'schoolYear' },
-              { header: 'Semester', accessor: 'semester' },
-              { header: 'Term', accessor: 'term' },
-              { header: 'GPA', accessor: (item) => (item.average / 25).toFixed(1) },
-            ],
-            rows: gradeHistory,
-            emptyMessage: 'No grade history yet.',
-          },
-        ],
+        sections: [{
+          title: 'Grades and Feedback',
+          columns: [
+            { header: 'Subject', accessor: 'subject', width: 1.2 },
+            { header: 'School Year', accessor: 'schoolYear', width: 0.9 },
+            { header: 'Semester', accessor: 'semester', width: 0.9 },
+            { header: 'Prelim', accessor: (group) => (group.terms.prelim ? formatGradeValue(group.terms.prelim) : '-'), width: 0.7 },
+            { header: 'Midterm', accessor: (group) => (group.terms.midterm ? formatGradeValue(group.terms.midterm) : '-'), width: 0.7 },
+            { header: 'Finals', accessor: (group) => (group.terms.finals ? formatGradeValue(group.terms.finals) : '-'), width: 0.7 },
+            {
+              header: 'Feedback',
+              accessor: (group) => GRADE_TERMS.map(({ key, label }) => {
+                const feedback = group.terms[key]?.feedback?.trim();
+                return feedback ? `${label}: ${feedback}` : null;
+              }).filter(Boolean).join('; ') || 'No feedback',
+              width: 1.5,
+            },
+          ],
+          rows: gradeGroups,
+          emptyMessage: 'No grades match the selected school year and semester.',
+        }],
       });
-      setStatusMessage('Your grade report downloaded successfully.');
+      setReportToast('Your grade report downloaded successfully.');
     } catch {
-      setErrorMessage('We could not download your report. Please try again.');
+      setReportErrorToast('We could not download your report. Please try again.');
     } finally {
       setIsDownloading(false);
     }
@@ -146,150 +127,111 @@ const StudentGrades = () => {
 
   return (
     <div className="grades-page">
-      {statusMessage && <StatusMessage variant="success" className="student-report-status">{statusMessage}</StatusMessage>}
-      {errorMessage && <StatusMessage variant="error" className="student-report-status">{errorMessage}</StatusMessage>}
-
-      <div ref={reportRef}>
-        <div className="grades-toolbar">
-          <h1>My Grades</h1>
-
-          <div className="grades-filters">
-            <label>
-              <span>School Year</span>
-              <select value={selectedSchoolYear} onChange={(event) => setSelectedSchoolYear(event.target.value)}>
-                <option value="All">All years</option>
-                {schoolYears.map((schoolYear) => (
-                  <option value={schoolYear} key={schoolYear}>{schoolYear}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Semester</span>
-              <select value={selectedSemester} onChange={(event) => setSelectedSemester(event.target.value)}>
-                <option value="All">All semesters</option>
-                {semesters.map((semester) => (
-                  <option value={semester} key={semester}>{semester}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div className="grades-content-grid">
-          <main className="grades-main">
-            <div className="grades-stats">
-              <section className="grade-stat-card">
-                <h2>Cumulative GPA</h2>
-                <p>{cumulativeGpa}</p>
-              </section>
-              <section className="grade-stat-card">
-                <h2>Active Subjects</h2>
-                <p>{activeSubjects}</p>
-              </section>
-              <section className="grade-stat-card status-card">
-                <h2>Academic Status</h2>
-                <p>{academicStatus}</p>
-              </section>
-            </div>
-
-            <section className="grades-table-card">
-              <table className="student-grades-table">
-                <thead>
-                  <tr>
-                    <th>Subject</th>
-                    <th>Score</th>
-                    <th>Grade</th>
-                    <th>Feedback</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayRows.map((grade) => (
-                    <tr key={grade.id}>
-                      <td>{grade.subject}</td>
-                      <td>{grade.isAssignedOnly ? 'Not graded yet' : Number(grade.score).toFixed(1)}</td>
-                      <td>
-                        <span>{grade.isAssignedOnly ? 'Pending' : getLetterGrade(Number(grade.score))}</span>
-                      </td>
-                      <td>{grade.feedback || 'No feedback yet'}</td>
-                    </tr>
-                  ))}
-                  {displayRows.length === 0 && (
-                    <tr>
-                      <td colSpan="4">No subjects match the selected term.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </section>
-
-            <section className="academic-journey">
-              <h2>Grade History</h2>
-              <div className="journey-list">
-                {gradeHistory.map((item) => (
-                  <article key={item.key}>
-                    <small>{item.schoolYear}</small>
-                    <strong>{item.semester} - {item.term}</strong>
-                    <b>{(item.average / 25).toFixed(1)} GPA</b>
-                  </article>
-                ))}
-                {gradeHistory.length === 0 && (
-                  <article>
-                    <small>No records</small>
-                    <strong>No grade history yet</strong>
-                    <b>0.0 GPA</b>
-                  </article>
-                )}
-              </div>
-            </section>
-          </main>
-
-          <aside className="grades-side">
-            <section className="subject-detail-card">
-              <h2>Subject: {selectedGrade?.subject || 'No subject selected'}</h2>
-              <div className="activity-table">
-                <div>
-                  <span>Term</span>
-                  <span>Score</span>
-                </div>
-                <div>
-                  <span>{selectedGrade?.term || 'N/A'}</span>
-                  <strong>{selectedGrade && !selectedGrade.isAssignedOnly ? `${Number(selectedGrade.score).toFixed(1)}/100` : '--'}</strong>
-                </div>
-                <div>
-                  <span>Semester</span>
-                  <strong>{selectedGrade?.semester || 'N/A'}</strong>
-                </div>
-                <div>
-                  <span>School Year</span>
-                  <strong>{selectedGrade?.schoolYear || 'N/A'}</strong>
-                </div>
-              </div>
-
-              <div className="teacher-note">
-                <h3>Teacher Feedback</h3>
-                <p>{selectedGrade?.feedback || 'No feedback yet.'}</p>
-              </div>
-            </section>
-          </aside>
+      <div className="grades-toolbar">
+        <h1>Student Grades</h1>
+        <div className="grades-filters">
+          <label>
+            <span>School Year</span>
+            <select value={selectedSchoolYear} onChange={(event) => setSelectedSchoolYear(event.target.value)}>
+              <option value="All">All years</option>
+              {schoolYears.map((schoolYear) => <option value={schoolYear} key={schoolYear}>{schoolYear}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Semester</span>
+            <select value={selectedSemester} onChange={(event) => setSelectedSemester(event.target.value)}>
+              <option value="All">All semesters</option>
+              {semesters.map((semester) => <option value={semester} key={semester}>{semester}</option>)}
+            </select>
+          </label>
         </div>
       </div>
 
+      <section className="grades-table-card" aria-label="Grades and feedback">
+        <table className="student-grades-table">
+          <thead>
+            <tr>
+              <th>Subject</th>
+              <th>School Year</th>
+              <th>Semester</th>
+              <th>Prelim</th>
+              <th>Midterm</th>
+              <th>Finals</th>
+              <th>Feedback</th>
+            </tr>
+          </thead>
+          <tbody>
+            {gradeGroups.map((gradeGroup) => (
+              <tr key={gradeGroup.id}>
+                <td>{gradeGroup.subject}</td>
+                <td>{gradeGroup.schoolYear}</td>
+                <td>{gradeGroup.semester}</td>
+                {GRADE_TERMS.map(({ key }) => (
+                  <td key={key} className="grade-term-score">
+                    {gradeGroup.terms[key] ? formatGradeValue(gradeGroup.terms[key]) : '-'}
+                  </td>
+                ))}
+                <td className="feedback-cell">
+                  <button className="view-feedback-btn" type="button" onClick={() => setSelectedFeedback(gradeGroup)}>
+                    View feedback
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {gradeGroups.length === 0 && selectedSemester === '2nd Semester' && (
+              <tr className="grades-placeholder-row" aria-label="No second-semester grades have been added">
+                <td>-</td>
+                <td>-</td>
+                <td>2nd Semester</td>
+                {GRADE_TERMS.map(({ key }) => <td className="grade-term-score" key={key}>-</td>)}
+                <td />
+              </tr>
+            )}
+            {gradeGroups.length === 0 && selectedSemester !== '2nd Semester' && (
+              <tr>
+                <td colSpan="7" className="grades-empty">No grades match the selected school year and semester.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      <dialog
+        className="feedback-dialog"
+        ref={feedbackDialogRef}
+        aria-labelledby="feedback-dialog-title"
+        onClose={() => setSelectedFeedback(null)}
+      >
+        {selectedFeedback && (
+          <div className="feedback-dialog-content">
+            <div className="feedback-dialog-header">
+              <div>
+                <h2 id="feedback-dialog-title">Feedback</h2>
+              </div>
+              <button className="feedback-dialog-close" type="button" onClick={() => feedbackDialogRef.current?.close()}>
+                Close
+              </button>
+            </div>
+            <div className="feedback-dialog-terms">
+              {GRADE_TERMS.map(({ key, label }) => (
+                <section className="feedback-dialog-term" key={key}>
+                  <h3>{label}</h3>
+                  <p>{selectedFeedback.terms[key]?.feedback || 'No feedback has been provided for this grading period yet.'}</p>
+                </section>
+              ))}
+            </div>
+          </div>
+        )}
+      </dialog>
+
       <div className="grades-actions grades-report-actions">
         <button className="download-report-btn" type="button" onClick={handleDownloadReport} disabled={isDownloading}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <path d="M14 2v6h6M9 15h6M12 12v6" />
-          </svg>
           <span className="button-content">
             {isDownloading && <LoadingSpinner label="Downloading grade report" size="small" />}
             {isDownloading ? 'Downloading...' : 'Download Report PDF'}
           </span>
         </button>
-        <button className="print-report-btn" type="button" onClick={handlePrint}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-            <path d="M6 14h12v8H6z" />
-          </svg>
+        <button className="print-report-btn" type="button" onClick={() => window.print()}>
           Print Report
         </button>
       </div>
