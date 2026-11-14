@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local environment settings (keep credentials out of Git)
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example

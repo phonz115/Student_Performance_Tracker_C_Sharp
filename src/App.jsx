@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider } from './context/AuthProvider';
 import { useAuth } from './hooks/useAuth';
 import { LoadingSpinner } from './components/ui';
@@ -13,9 +13,15 @@ import AdminLogin from './pages/AdminLogin';
 import TeacherLogin from './pages/TeacherLogin';
 import Sidebar from './components/Sidebar';
 import StudentHeader from './components/StudentHeader';
+import ResetPassword from './pages/ResetPassword';
 
 const AppRoutes = () => {
+  const location = useLocation();
   const { user, loading, error, reloadData } = useAuth();
+
+  if (location.pathname === '/reset-password') {
+    return <ResetPassword />;
+  }
 
   if (loading) {
     return (

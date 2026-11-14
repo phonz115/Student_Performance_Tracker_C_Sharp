@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 const { pool, testConnection } = require("./db");
 
 const app = express();
@@ -18,8 +19,10 @@ const API_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const API_RATE_LIMIT_MAX_REQUESTS = 300;
 const STUDENT_PROGRAMS = new Set(["BSIT", "BSCS", "BSEMC"]);
 const loginAttempts = new Map();
-const passwordResetTokens = new Map();
 const sessions = new Map();
+const passwordResetRequestLimits = new Map();
+const PASSWORD_RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_REQUEST_MAX = 5;
 const apiRateLimits = new Map();
 
 app.use(cors({
@@ -188,6 +191,57 @@ const recordFailedLogin = (key) => {
 
 const createToken = () => crypto.randomBytes(32).toString("hex");
 
+const isPasswordResetEmailConfigured = () =>
+  Boolean(process.env.SMTP_USER?.trim() && process.env.SMTP_APP_PASSWORD?.trim());
+
+const canRequestPasswordReset = (key) => {
+  const now = Date.now();
+  const current = passwordResetRequestLimits.get(key);
+
+  if (!current || now >= current.resetAt) {
+    passwordResetRequestLimits.set(key, { count: 1, resetAt: now + PASSWORD_RESET_REQUEST_WINDOW_MS });
+    return true;
+  }
+
+  if (current.count >= PASSWORD_RESET_REQUEST_MAX) return false;
+  passwordResetRequestLimits.set(key, { ...current, count: current.count + 1 });
+  return true;
+};
+
+const hashPasswordResetToken = (token) =>
+  crypto.createHash("sha256").update(token).digest("hex");
+
+const sendPasswordResetEmail = async (email, token, role) => {
+  const smtpUser = process.env.SMTP_USER.trim();
+  const smtpPassword = process.env.SMTP_APP_PASSWORD.replace(/\s/g, "");
+  const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
+  const resetUrl = new URL("/reset-password", appBaseUrl);
+
+  if (process.env.NODE_ENV === "production" && resetUrl.protocol !== "https:") {
+    throw new Error("APP_BASE_URL must use HTTPS in production.");
+  }
+
+  resetUrl.searchParams.set("token", token);
+  resetUrl.searchParams.set("role", role);
+  const safeResetUrl = resetUrl.toString().replace(/&/g, "&amp;");
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: smtpUser, pass: smtpPassword },
+  });
+
+  await transporter.sendMail({
+    from: { name: "ClassIQ", address: smtpUser },
+    to: email,
+    subject: "Reset your ClassIQ password",
+    text: "Use this one-time link to reset your ClassIQ password. It expires in 20 minutes: " + resetUrl.toString(),
+    html: [
+      "<p>We received a request to reset your ClassIQ password.</p>",
+      '<p><a href="' + safeResetUrl + '">Reset your password</a></p>',
+      "<p>This link can be used once and expires in 20 minutes. If you did not request this, you can ignore this email.</p>",
+    ].join(""),
+  });
+};
+
 const parseCookies = (cookieHeader = "") => {
   return cookieHeader.split(";").reduce((cookies, cookiePart) => {
     const [rawName, ...rawValue] = cookiePart.trim().split("=");
@@ -318,6 +372,8 @@ const ensureApplicationSchema = async () => {
       password VARCHAR(255) NOT NULL
     ) ENGINE=InnoDB
   `);
+
+  await pool.query("CREATE TABLE IF NOT EXISTS password_reset_tokens (token_hash CHAR(64) PRIMARY KEY, user_id VARCHAR(40) NOT NULL, expires_at BIGINT NOT NULL, created_at BIGINT NOT NULL, INDEX idx_password_reset_user_id (user_id)) ENGINE=InnoDB");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS subjects (
@@ -458,13 +514,13 @@ const ensureDefaultAdminAccount = async () => {
   );
   const existingUser = existingRows[0];
 
-  if (existingUser && existingUser.id !== adminUser.id) {
-    console.warn("Default admin email is already used by another account.");
-    return;
-  }
+  if (existingUser) {
+    if (existingUser.id !== adminUser.id || existingUser.email !== adminUser.email || existingUser.role !== "admin") {
+      console.warn("A different account already uses the default admin ID or email.");
+      return;
+    }
 
-  if (existingUser && existingUser.email !== adminUser.email) {
-    console.warn("Default admin ID is already used by another account.");
+    console.info("Default admin account already exists.");
     return;
   }
 
@@ -478,18 +534,10 @@ const ensureDefaultAdminAccount = async () => {
     hashPassword("Admin@123"),
   ];
 
-  if (existingUser) {
-    await pool.query(
-      "UPDATE users SET email = ?, firstname = ?, lastname = ?, name = ?, role = ?, password = ? WHERE id = ?",
-      [adminUser.email, adminUser.firstName, adminUser.lastName, adminUser.name, adminUser.role, adminValues[6], adminUser.id]
-    );
-  } else {
-    await pool.query(
-      `INSERT INTO users (id, email, firstname, lastname, name, role, password)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      adminValues
-    );
-  }
+  await pool.query(
+    "INSERT INTO users (id, email, firstname, lastname, name, role, password) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    adminValues
+  );
 
   console.info("Default admin account is ready: admin@school.com");
 };
@@ -706,38 +754,61 @@ app.post("/api/password-reset/request", async (req, res) => {
     return res.status(400).json({ message: "Identifier and valid role are required" });
   }
 
+  if (!isPasswordResetEmailConfigured()) {
+    return res.status(503).json({ message: "Password reset email is not configured. Please contact the administrator." });
+  }
+
+  const requestKey = crypto
+    .createHash("sha256")
+    .update(getClientIp(req) + "|" + role + "|" + identifier.toLowerCase())
+    .digest("hex");
+  if (!canRequestPasswordReset(requestKey)) {
+    return res.status(429).json({ message: "Too many reset requests. Please wait before trying again." });
+  }
+
   const field = role === "student" ? "id" : "email";
+  const genericMessage = "If the account exists, a password reset link has been sent to its registered email address.";
 
   try {
-    const nameExpression = getUserNameExpression();
-    const [rows] = await pool.query(
-      `SELECT id, email, ${nameExpression} AS name, role FROM users WHERE ${field} = ? AND role = ? LIMIT 1`,
-      [identifier, role]
-    );
-
+    const lookupSql = "SELECT id, email, role FROM users WHERE " + field + " = ? AND role = ? LIMIT 1";
+    const [rows] = await pool.query(lookupSql, [identifier, role]);
     const user = rows[0];
 
     if (user) {
       const token = createToken();
-      passwordResetTokens.set(token, {
-        userId: user.id,
-        expiresAt: Date.now() + PASSWORD_RESET_EXPIRY_MS,
-      });
+      const tokenHash = hashPasswordResetToken(token);
+      const now = Date.now();
+
+      await pool.query(
+        "DELETE FROM password_reset_tokens WHERE user_id = ? OR expires_at <= ?",
+        [user.id, now]
+      );
+      await pool.query(
+        "INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+        [tokenHash, user.id, now + PASSWORD_RESET_EXPIRY_MS, now]
+      );
+
+      try {
+        await sendPasswordResetEmail(user.email, token, role);
+      } catch (error) {
+        await pool.query("DELETE FROM password_reset_tokens WHERE token_hash = ?", [tokenHash]);
+        throw error;
+      }
     }
 
-    res.json({ message: "If the account exists, a reset link has been generated and will expire in 20 minutes." });
+    return res.json({ message: genericMessage });
   } catch (error) {
     safeLogError("Password reset request failed", error);
-    res.status(500).json({ message: "Password reset request failed" });
+    return res.status(500).json({ message: "We could not send the reset email. Please contact the administrator." });
   }
 });
 
 app.post("/api/password-reset/confirm", async (req, res) => {
-  const { token, password, confirmPassword } = req.body;
-  const resetSession = passwordResetTokens.get(token);
+  const token = String(req.body.token || "").trim();
+  const password = String(req.body.password || "");
+  const confirmPassword = String(req.body.confirmPassword || "");
 
-  if (!resetSession || Date.now() > resetSession.expiresAt) {
-    if (token) passwordResetTokens.delete(token);
+  if (!/^[a-f0-9]{64}$/i.test(token)) {
     return res.status(400).json({ message: "Password reset link is invalid or expired" });
   }
 
@@ -746,18 +817,50 @@ app.post("/api/password-reset/confirm", async (req, res) => {
   }
 
   const passwordError = validatePassword(password);
-
   if (passwordError) {
     return res.status(400).json({ message: passwordError });
   }
 
+  const connection = await pool.getConnection();
   try {
-    await pool.query("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), resetSession.userId]);
-    passwordResetTokens.delete(token);
-    res.json({ message: "Password has been reset successfully" });
+    await connection.beginTransaction();
+    const tokenHash = hashPasswordResetToken(token);
+    const [rows] = await connection.query(
+      "SELECT user_id FROM password_reset_tokens WHERE token_hash = ? AND expires_at > ? LIMIT 1 FOR UPDATE",
+      [tokenHash, Date.now()]
+    );
+
+    if (!rows.length) {
+      await connection.rollback();
+      return res.status(400).json({ message: "Password reset link is invalid or expired" });
+    }
+
+    const userId = rows[0].user_id;
+    const [updateResult] = await connection.query(
+      "UPDATE users SET password = ? WHERE id = ?",
+      [hashPassword(password), userId]
+    );
+
+    if (updateResult.affectedRows !== 1) {
+      await connection.rollback();
+      return res.status(400).json({ message: "Password reset link is invalid or expired" });
+    }
+
+    await connection.query("DELETE FROM password_reset_tokens WHERE user_id = ?", [userId]);
+    await connection.commit();
+
+    for (const [sessionToken, session] of sessions) {
+      if (session.user?.id === userId) sessions.delete(sessionToken);
+    }
+    clearAuthCookie(res);
+
+    return res.json({ message: "Password has been reset successfully" });
   } catch (error) {
+    await connection.rollback();
     safeLogError("Password reset failed", error);
-    res.status(500).json({ message: "Password reset failed" });
+    return res.status(500).json({ message: "Password reset failed" });
+  } finally {
+    connection.release();
   }
 });
 

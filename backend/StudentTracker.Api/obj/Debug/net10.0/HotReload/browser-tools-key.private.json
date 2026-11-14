@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "algorithm": "RSA-OAEP-SHA256",
+  "format": "RSAParameters",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA33SFcd3Iy2H4SakAvvpXL2l6zOpfoY2tTjJ9zeSY1Zd9/dkcHISggGp0C\u002BaXBteVdrWaTeXkwVgxjPL7h/MbR\u002Bc\u002BgAXvP2xanzZubIFd65ioLMnuM2iFtG5b7tEw0AVE66GGfu9Fd2CiloSgyU94fcsLoVU96NzzhsPFyBsJxXZvK5Hi0zmnQ1pNSwJlupgCGbqQJj2sZYQejwCySmnPnw4sccqBxM0Aw4q3epc3ORFw4m9kcS6NolI2jsKVE\u002BfPHUc/gDlCxmzwtxR9ASrnOdH00PbtAVtIc7h\u002B1jbdHW2d6HJHn4ppgCPZHl8iyxYjgA0WxFhxs28MTL3ybdTM/QIDAQAB",
+  "parameters": {
+    "modulus": "33SFcd3Iy2H4SakAvvpXL2l6zOpfoY2tTjJ9zeSY1Zd9/dkcHISggGp0C\u002BaXBteVdrWaTeXkwVgxjPL7h/MbR\u002Bc\u002BgAXvP2xanzZubIFd65ioLMnuM2iFtG5b7tEw0AVE66GGfu9Fd2CiloSgyU94fcsLoVU96NzzhsPFyBsJxXZvK5Hi0zmnQ1pNSwJlupgCGbqQJj2sZYQejwCySmnPnw4sccqBxM0Aw4q3epc3ORFw4m9kcS6NolI2jsKVE\u002BfPHUc/gDlCxmzwtxR9ASrnOdH00PbtAVtIc7h\u002B1jbdHW2d6HJHn4ppgCPZHl8iyxYjgA0WxFhxs28MTL3ybdTM/Q==",
+    "exponent": "AQAB",
+    "d": "YyCcxjueBONsMrkfVJlXrfe7\u002B0WJsPBZzlPFzV24kyBGSyNSPjBzxyPyYQklPGrMqkG7twziIwdNy/pKrS\u002BijY4/AqofTWJy/Sg3ajklggtRp7TYz8NxdO50KAhzAAUmYuVf9dWNWnzrA5zIeyWfDSbS/PoEodXKzqDwj2m3NvoT7KE7pLxbyz9VS0DJSG3FfSlewKjxAjsD\u002Byz0OXgDP8wl1uYYbH5zd5kOGg6lgYO2wMsTDhbXziRroBs290XWoeAWc0xtlAIfmjU9hb7EeEeF6UcZWv6\u002BjqV4B85MFVziTWShdK7Y3SbRm4bH9sJh4grzyq1200rSPBOghH8o3Q==",
+    "p": "6i8sP/qzZ1sJ7jxotYphw6KuaELoKGrsngfS7IjUFTJSbs8vI3qEhf1Pg7XKha22XjAzraQk5D4dNnoI6FO\u002B7jmKip74L1rm1JP1Z4xiM6xx9wDgfZ5NYEmshhs8jeZTNvOkheSlre1r1O5Yy29kbt/GfbpaFRB1wLbqAgCYvYc=",
+    "q": "9EV7Cij6wiAhYX2wVwFQUUzn7lpnVPKWZAXxNI0TeNx6vgoxx5kKN4Agb7cOeU\u002B/\u002BxWc3ZietkPc3C94ANsP3PTCrr029aLgm01ahdTCsbYk5Yd8olEQYFiTCnHIwyaBVOlZNaRQUAGQcmkrJMHpylqnG09H/QVMWiZ8DAoWols=",
+    "dp": "emASSJCyhXUeeF8a/JsGwZvWdedYuB4/7cj64N4TrcvxJbSg1nJkpDwd/B7YaQjAvvGDX97h5F/NFjWpR/bTVFu/WPb/jId9DmMPH4BNpOEdYM0Vgq9hkcqOHDpJZ4GPxKyHMeys43mpGsk\u002Bn3hjTEklyXfDMTS7w\u002BwR1uAG8Ss=",
+    "dq": "kOdKputKXbArvSaPXf2EhMYHa8irNaQ2fJ1dydvKak74bRWlFA\u002BAFQ5nr327E1GwxCS9CmNH\u002Bz1kniV2naNV1LBJcNkD6lE1xkrr4SomWL\u002BBQbvOvocyHMVObMq02rdTz2ghqIWRsvRKmOQ0WLjDlGuUZ8nvHXRwJ6ZevdGaPbM=",
+    "inverseQ": "xSszVxRTSx4cJOKbVUFsVBCEAiQcanfEVm3qpHuHm7vG1RT6q3OzfjWtLrCXvxK/r0TSmBzoyUSCZgksMwTevhYgzXnUuiV4ShskD8ZA263wgnJw/v\u002BtX/hSee9KV4SBTvuVru9CztN7MKe/oZ8fMi9A4OyCE/vmx1KDF1mOiWE="
+  }
+}
