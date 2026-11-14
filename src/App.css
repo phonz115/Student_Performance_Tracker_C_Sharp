@@ -10,7 +10,7 @@
 .app-header {
   flex: 0 0 auto;
   width: 100%;
-  padding: 18px 32px;
+  padding: 20px 32px;
   background: var(--primary, #315d9b);
   color: #fff;
   box-sizing: border-box;
@@ -22,6 +22,16 @@
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0;
+}
+
+.app-header.login-page-header {
+  padding-left: clamp(20px, 3vw, 44px);
+  text-align: left;
+}
+
+.app-header.login-page-header h1 {
+  font-size: 33px;
+  letter-spacing: 0.02em;
 }
 
 .main-content {
@@ -475,7 +485,6 @@ textarea:focus-visible {
     min-height: var(--site-zoom-height, 100vh);
     height: auto;
   }
-
   .main-content {
     display: block;
   }

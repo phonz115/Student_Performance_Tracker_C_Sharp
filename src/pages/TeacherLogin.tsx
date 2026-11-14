@@ -3,7 +3,7 @@ import RoleLogin from './RoleLogin';
 const TeacherLogin = () => (
   <RoleLogin
     role="teacher"
-    headerTitle="Teacher Login - Performance Tracker"
+    headerTitle="ClassIQ"
     title="Teacher Login"
     subtitle="Enter your credentials to access your account"
     identifierLabel="Email Address"
