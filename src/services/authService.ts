@@ -15,6 +15,10 @@ export const requestPasswordReset = (resetData: PasswordResetPayload) => {
   return apiPost<MessageResponse, PasswordResetPayload>('/password-reset/request', resetData);
 };
 
+export const confirmPasswordReset = (resetData: { token: string; password: string; confirmPassword: string }) => {
+  return apiPost<MessageResponse, typeof resetData>('/password-reset/confirm', resetData);
+};
+
 export const logoutUser = () => {
   return apiPost<LogoutResponse, Record<string, never>>('/logout', {});
 };

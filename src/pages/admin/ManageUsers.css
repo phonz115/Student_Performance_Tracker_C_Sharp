@@ -80,7 +80,9 @@
 }
 
 .admin-tool-secondary:hover {
-  background: var(--surface-muted, #f2f4f7);
+  border-color: var(--danger, #b54747);
+  background: var(--danger, #b54747);
+  color: #fff;
 }
 
 .users-primary-btn:disabled,
@@ -116,7 +118,7 @@
 
 .users-table th,
 .course-table th {
-  background: var(--surface-muted, #194b96);
+  background: var(--primary, #315d9b);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -179,6 +181,13 @@
 
 .users-icon-btn.delete {
   color: var(--danger, #b54747);
+}
+
+.users-icon-btn.delete:hover,
+.users-icon-btn.delete:focus-visible {
+  border-color: var(--danger, #b54747);
+  background: var(--danger, #b54747);
+  color: #fff;
 }
 
 .users-icon-btn svg,

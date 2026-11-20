@@ -72,7 +72,7 @@ const RoleLogin = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   useStatusToast(error, 'error', 'Login issue');
-  useStatusToast(successMessage, 'success', 'Request sent');
+  useStatusToast(successMessage, 'success', 'Password reset');
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -109,7 +109,7 @@ const RoleLogin = ({
     try {
       setIsResetting(true);
       await requestPasswordReset(normalizedIdentifier, role);
-      setSuccessMessage('Password reset request sent. Please use the reset link within 20 minutes.');
+      setSuccessMessage('If the account exists, a reset link was sent to its registered email. Check the inbox or spam folder. The link expires in 20 minutes.');
     } catch (err) {
       setError(getErrorMessage(err, 'We could not start the password reset. Check your details and try again.'));
     } finally {
@@ -119,7 +119,7 @@ const RoleLogin = ({
 
   return (
     <>
-      <Header title={headerTitle} />
+      <Header title={headerTitle} className="login-page-header" />
       <Layout leftImage={studentIcons} showImage>
         <div style={styles.container}>
           <div style={styles.card}>
