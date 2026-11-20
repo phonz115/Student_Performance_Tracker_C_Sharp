@@ -1,16 +1,39 @@
-# React + Vite
+# Student Performance Tracker
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The React/Vite frontend uses the ASP.NET Core API and MySQL database.
 
-Currently, two official plugins are available:
+## Requirements
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Node.js and npm
+- .NET 10 SDK
+- MySQL
 
-## React Compiler
+## Local setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Create the database using `server/student_tracker.sql`. For an existing database, apply the schema additions for `users.course`, `users.school_year`, `users.semester`, and `password_reset_tokens` if they are missing.
+2. In PowerShell, set the MySQL connection string for the current terminal. Replace the placeholders with your local database values; do not commit credentials.
 
-## Expanding the ESLint configuration
+   ```powershell
+   $env:MYSQL_CONNECTION_STRING = "Server=localhost;Database=student_tracker;User ID=YOUR_DB_USER;Password=YOUR_DB_PASSWORD;"
+   ```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+3. From the repository root, install frontend dependencies and start the C# API and Vite:
+
+   ```powershell
+   npm install
+   npm run dev
+   ```
+
+   Vite runs at `http://localhost:5173`; the API runs at `http://localhost:5001`. The frontend API base defaults to `http://localhost:5001/api`.
+
+Password-reset email is optional for local development. To enable it, set `SMTP_USER` and `SMTP_APP_PASSWORD` in the same terminal before starting the app. Use a Gmail app password, not your account password. `APP_BASE_URL` defaults to `http://localhost:5173`.
+
+## Checks
+
+```powershell
+dotnet build backend\StudentTracker.Api
+npm run check
+npm run build
+```
+
+Admin backups include password hashes. Keep exported backup files private.

@@ -4,8 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"vite\"",
-    "server": "node ./server/index.js",
+    "dev": "concurrently \"dotnet run --project backend/StudentTracker.Api\" \"vite\"",
     "build": "vite build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -13,12 +12,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "cors": "^2.8.6",
-    "dotenv": "^18.0.10",
-    "express": "^5.2.1",
     "html2pdf.js": "^0.14.0",
     "jspdf": "^4.2.1",
-    "mysql2": "^3.24.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.1"

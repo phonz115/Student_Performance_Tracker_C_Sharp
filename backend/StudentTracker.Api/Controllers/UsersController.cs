@@ -22,7 +22,8 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
         string? Course,
         string? SchoolYear,
         string? Semester,
-        [Required, MinLength(8)] string Password);
+        [Required, MinLength(8)] string Password,
+        string? Name);
 
     public sealed record EditUser(
         [Required, EmailAddress] string Email,
@@ -31,30 +32,65 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
         [Required] string Role,
         string? Course,
         string? SchoolYear,
-        string? Semester);
+        string? Semester,
+        string? Name);
 
     public sealed record PasswordInput([Required, MinLength(8)] string Password);
 
     [HttpGet]
-    [Authorize(Roles = "admin")]
     public async Task<IActionResult> List([FromQuery] string? role, CancellationToken ct)
     {
+        var currentRole = User.FindFirstValue(ClaimTypes.Role);
+        var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (currentRole is not ("admin" or "teacher" or "student"))
+        {
+            return Forbid();
+        }
+
         await using var connection = await db.OpenAsync(ct);
-        const string sql = """
-            SELECT id, email, firstname, lastname,
-                   COALESCE(name, TRIM(CONCAT_WS(' ', firstname, lastname))) AS name,
-                   role, COALESCE(course, '') AS course,
-                   COALESCE(school_year, '') AS schoolYear,
-                   COALESCE(semester, '') AS semester
-            FROM users
-            WHERE (@role IS NULL OR role = @role)
-            ORDER BY name
+        var sql = """
+            SELECT u.id, u.email, u.firstname, u.lastname,
+                   COALESCE(u.name, TRIM(CONCAT_WS(' ', u.firstname, u.lastname))) AS name,
+                   u.role, COALESCE(u.course, '') AS course,
+                   COALESCE(u.school_year, '') AS schoolYear,
+                   COALESCE(u.semester, '') AS semester
+            FROM users u
             """;
 
+        if (currentRole == "teacher")
+        {
+            sql += " " + """
+                WHERE u.role = 'student'
+                  AND (
+                      EXISTS (SELECT 1 FROM teacher_assignments ta
+                              WHERE ta.student_id = u.id AND ta.teacher_id = @uid)
+                      OR EXISTS (SELECT 1 FROM grades g
+                                 WHERE g.student_id = u.id AND g.teacher_id = @uid)
+                  )
+                """;
+        }
+        else if (currentRole == "student")
+        {
+            sql += " WHERE u.id = @uid";
+        }
+        else
+        {
+            sql += " WHERE (@role IS NULL OR u.role = @role)";
+        }
+
+        sql += " ORDER BY name";
+
         await using var command = new MySqlCommand(sql, connection);
-        command.Parameters.AddWithValue(
-            "@role",
-            string.IsNullOrWhiteSpace(role) ? DBNull.Value : role.Trim().ToLowerInvariant());
+        if (currentRole == "admin")
+        {
+            command.Parameters.AddWithValue(
+                "@role",
+                string.IsNullOrWhiteSpace(role) ? DBNull.Value : role.Trim().ToLowerInvariant());
+        }
+        else
+        {
+            command.Parameters.AddWithValue("@uid", currentUserId);
+        }
 
         await using var reader = await command.ExecuteReaderAsync(ct);
         var users = new List<object>();
@@ -86,18 +122,27 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
     [Authorize(Roles = "admin")]
     public async Task<IActionResult> Create(NewUser input, CancellationToken ct)
     {
+        var role = input.Role.Trim().ToLowerInvariant();
         if (!ModelState.IsValid ||
-            input.Role is not ("admin" or "teacher" or "student") ||
+            role is not ("admin" or "teacher" or "student") ||
             string.IsNullOrWhiteSpace(input.Id) ||
             string.IsNullOrWhiteSpace(input.Password))
         {
             return BadRequest(new { message = "Check the required fields and role." });
         }
 
-        var firstName = input.FirstName?.Trim() ?? "";
-        var lastName = input.LastName?.Trim() ?? "";
-        var fullName = (firstName + " " + lastName).Trim();
+        var passwordError = PasswordPolicy.Validate(input.Password);
+        if (passwordError is not null)
+        {
+            return BadRequest(new { message = passwordError });
+        }
 
+        var (firstName, lastName, fullName) =
+            ResolveName(input.Name, input.FirstName, input.LastName);
+        if (string.IsNullOrWhiteSpace(fullName))
+        {
+            return BadRequest(new { message = "A user name is required." });
+        }
         await using var connection = await db.OpenAsync(ct);
         const string sql = """
             INSERT INTO users
@@ -114,7 +159,7 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
         command.Parameters.AddWithValue("@firstName", firstName);
         command.Parameters.AddWithValue("@lastName", lastName);
         command.Parameters.AddWithValue("@name", fullName);
-        command.Parameters.AddWithValue("@role", input.Role);
+        command.Parameters.AddWithValue("@role", role);
         command.Parameters.AddWithValue("@password", PasswordHash.Create(input.Password));
         command.Parameters.AddWithValue("@course", input.Course ?? "");
         command.Parameters.AddWithValue("@schoolYear", input.SchoolYear ?? "2025-2026");
@@ -138,7 +183,7 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
                 firstName,
                 lastName,
                 name = fullName,
-                role = input.Role,
+                role,
                 course = input.Course,
                 schoolYear = input.SchoolYear,
                 semester = input.Semester
@@ -149,15 +194,18 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
     [Authorize(Roles = "admin")]
     public async Task<IActionResult> Update(string id, EditUser input, CancellationToken ct)
     {
-        if (!ModelState.IsValid || input.Role is not ("admin" or "teacher" or "student"))
+        var role = input.Role.Trim().ToLowerInvariant();
+        if (!ModelState.IsValid || role is not ("admin" or "teacher" or "student"))
         {
             return BadRequest(new { message = "Check the required fields and role." });
         }
 
-        var firstName = input.FirstName?.Trim() ?? "";
-        var lastName = input.LastName?.Trim() ?? "";
-        var fullName = (firstName + " " + lastName).Trim();
-
+        var (firstName, lastName, fullName) =
+            ResolveName(input.Name, input.FirstName, input.LastName);
+        if (string.IsNullOrWhiteSpace(fullName))
+        {
+            return BadRequest(new { message = "A user name is required." });
+        }
         await using var connection = await db.OpenAsync(ct);
         const string sql = """
             UPDATE users
@@ -172,7 +220,7 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
         command.Parameters.AddWithValue("@firstName", firstName);
         command.Parameters.AddWithValue("@lastName", lastName);
         command.Parameters.AddWithValue("@name", fullName);
-        command.Parameters.AddWithValue("@role", input.Role);
+        command.Parameters.AddWithValue("@role", role);
         command.Parameters.AddWithValue("@course", input.Course ?? "");
         command.Parameters.AddWithValue("@schoolYear", input.SchoolYear ?? "2025-2026");
         command.Parameters.AddWithValue("@semester", input.Semester ?? "1st Semester");
@@ -190,7 +238,18 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
             return Conflict(new { message = "That email already exists." });
         }
 
-        return NoContent();
+        return Ok(new
+        {
+            id,
+            email = input.Email.Trim().ToLowerInvariant(),
+            firstName,
+            lastName,
+            name = fullName,
+            role,
+            course = input.Course ?? "",
+            schoolYear = input.SchoolYear ?? "2025-2026",
+            semester = input.Semester ?? "1st Semester"
+        });
     }
 
     [HttpPost("{id}/reset-password")]
@@ -205,6 +264,12 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var passwordError = PasswordPolicy.Validate(input.Password);
+        if (passwordError is not null)
+        {
+            return BadRequest(new { message = passwordError });
+        }
+
         await using var connection = await db.OpenAsync(ct);
         await using var command = new MySqlCommand(
             "UPDATE users SET password = @password WHERE id = @id",
@@ -214,7 +279,7 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
 
         return await command.ExecuteNonQueryAsync(ct) == 0
             ? NotFound(new { message = "User not found." })
-            : Ok(new { ok = true });
+            : Ok(new { message = "Password reset successfully" });
     }
 
     [HttpDelete("{id}")]
@@ -266,6 +331,7 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
                 "UPDATE subjects SET teacher_id = NULL WHERE teacher_id = @id",
                 "UPDATE courses SET teacher_id = NULL WHERE teacher_id = @id",
                 "DELETE FROM teacher_assignments WHERE teacher_id = @id OR student_id = @id",
+                "DELETE FROM password_reset_tokens WHERE user_id = @id",
                 "DELETE FROM users WHERE id = @id"
             ];
 
@@ -284,5 +350,30 @@ public sealed class UsersController(DbConnectionFactory db) : ControllerBase
             await transaction.RollbackAsync(ct);
             throw;
         }
+    }
+
+    private static (string FirstName, string LastName, string FullName) ResolveName(
+        string? name,
+        string? firstName,
+        string? lastName)
+    {
+        var first = firstName?.Trim() ?? "";
+        var last = lastName?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(first) && string.IsNullOrEmpty(last) &&
+            !string.IsNullOrWhiteSpace(name))
+        {
+            var parts = name.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            first = parts[0];
+            last = parts.Length > 1 ? parts[1] : "";
+        }
+
+        var full = string.Join(' ', new[] { first, last }.Where(part => part.Length > 0));
+        if (full.Length == 0)
+        {
+            full = name?.Trim() ?? "";
+        }
+
+        return (first, last, full);
     }
 }
