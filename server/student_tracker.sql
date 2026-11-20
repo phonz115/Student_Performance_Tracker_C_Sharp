@@ -9,7 +9,18 @@ CREATE TABLE IF NOT EXISTS users (
   lastname  VARCHAR(100),
   name      VARCHAR(180),
   role      VARCHAR(20)  NOT NULL CHECK (role IN ('admin', 'teacher', 'student')),
-  password  VARCHAR(255) NOT NULL
+  password  VARCHAR(255) NOT NULL,
+  course    VARCHAR(100) NOT NULL DEFAULT '',
+  school_year VARCHAR(20) NOT NULL DEFAULT '2025-2026',
+  semester  VARCHAR(40) NOT NULL DEFAULT '1st Semester'
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash CHAR(64) PRIMARY KEY,
+  user_id    VARCHAR(40) NOT NULL,
+  expires_at BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  INDEX idx_password_reset_user_id (user_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS subjects (

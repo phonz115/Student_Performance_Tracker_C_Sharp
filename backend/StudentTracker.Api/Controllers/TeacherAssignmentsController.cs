@@ -132,8 +132,8 @@ public sealed class TeacherAssignmentsController(DbConnectionFactory db)
             "DELETE FROM teacher_assignments WHERE id = @id",
             c);
         q.Parameters.AddWithValue("@id", id);
-    }
-}
         return await q.ExecuteNonQueryAsync(ct) == 0
             ? NotFound()
             : Ok(new { ok = true });
+    }
+}

@@ -1,4 +1,4 @@
-using System.ComponenetModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
@@ -10,7 +10,7 @@ namespace StudentTracker.Api.Controllers;
 [Route("api/subjects")]
 [Authorize]
 
-public sealed class SubjectsController(DbConnectFactory db) : ControllerBase
+public sealed class SubjectsController(DbConnectionFactory db) : ControllerBase
 {
     public sealed record Input(
         [Required] string Name,

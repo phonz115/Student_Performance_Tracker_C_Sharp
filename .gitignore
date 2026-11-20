@@ -27,7 +27,8 @@ dist-ssr
 .env
 .env.*
 !.env.example
-server/.env
-server/.env.*
-!server/.env.example
 .vs/
+
+# .NET build outputs
+**/bin/
+**/obj/

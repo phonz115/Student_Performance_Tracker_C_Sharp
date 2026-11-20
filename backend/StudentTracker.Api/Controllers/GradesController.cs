@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,226 +10,252 @@ namespace StudentTracker.Api.Controllers;
 [ApiController]
 [Route("api/grades")]
 [Authorize]
-
-public sealed class GradesController (DbConnectionFactory db) : ControllerBase
+public sealed class GradesController(DbConnectionFactory db) : ControllerBase
 {
-    public sealed record Input
-    (
-        string StudentId;
-        string Subject;
-        decimal Score;
-        string? Feedback;
-        string? SchoolYear;
-        string? Semester;
-        string? Term;
-    );
+    public sealed record Input(
+        [Required] string StudentId,
+        [Required] string Subject,
+        decimal Score,
+        string? Feedback,
+        string? SchoolYear,
+        string? Semester,
+        string? Term);
 
-    private string UserID() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+    public sealed record UpdateInput(
+        [Required] string Subject,
+        decimal Score,
+        string? Feedback,
+        string? SchoolYear,
+        string? Semester,
+        string? Term);
 
-    private string Role() => User.FindFirstValue(ClaimTypes.Roles) ?? "";
+    private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
 
+    private string Role => User.FindFirstValue(ClaimTypes.Role) ?? "";
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        await using var c = await db.OpenAsync(ct);
-        var sql = @"
-            SELECT g.id, g.student_id studentId,
-                COALESCE(
-                    u.name,
-                    TRIM(CONCAT_WS(' ', u.firstname, u.lastname))
-                ) studenName
-                g.subject, g.score, g.feedback,
-                g.teacher_id teacherId,
-                g.school_year schoolYear, g.semester, g.term
+        var sql = """
+            SELECT g.id, g.student_id AS studentId,
+                   COALESCE(u.name, TRIM(CONCAT_WS(' ', u.firstname, u.lastname))) AS studentName,
+                   COALESCE(g.subject, '') AS subject, g.score,
+                   COALESCE(g.feedback, '') AS feedback,
+                   g.teacher_id AS teacherId,
+                   g.school_year AS schoolYear, g.semester, g.term
             FROM grades g
-            JOIN users u ON u.id = g.student_id";
-        
+            JOIN users u ON u.id = g.student_id
+            """;
+
         if (Role == "student")
         {
-            sql += " WHERE g.student_id = @uid"
+            sql += " WHERE g.student_id = @uid";
         }
         else if (Role == "teacher")
         {
-            sql += " WHERE g.teacher_id = @uid"
+            sql += " " + """
+                 WHERE g.teacher_id = @uid
+                    OR g.student_id IN (
+                        SELECT student_id FROM teacher_assignments WHERE teacher_id = @uid
+                    )
+                """;
         }
 
         sql += " ORDER BY g.id DESC";
-        await using var q = new MySqlCommand(sql, c);
-        if (Role == "admin")
+
+        await using var connection = await db.OpenAsync(ct);
+        await using var command = new MySqlCommand(sql, connection);
+        if (Role != "admin")
         {
-            q.Parameters.AddWithValue("@uid", UserID);
+            command.Parameters.AddWithValue("@uid", UserId);
         }
 
-        await using var r = await q.ExecuteReaderAsync(ct);
+        await using var reader = await command.ExecuteReaderAsync(ct);
         var grades = new List<object>();
-        while (await r.ReadAsync(ct))
+        while (await reader.ReadAsync(ct))
         {
-            grades.Add(new (
-                id = r.GetInt32("id"),
-                studentId = r.GetString("studentId"),
-                studenName = r.GetString("studentName"),
-                subject = r.GetString("subject");
-                score = r.GetDecimal("score"),
-                feedback = r.IsDBNull(r.GetOrdinal("feedback"))
+            grades.Add(new
+            {
+                id = reader.GetInt32("id"),
+                studentId = reader.GetString("studentId"),
+                studentName = reader.GetString("studentName"),
+                subject = reader.GetString("subject"),
+                score = reader.GetDecimal("score"),
+                feedback = reader.GetString("feedback"),
+                teacherId = reader.IsDBNull(reader.GetOrdinal("teacherId"))
                     ? null
-                    : r.GetString("feedback"),
-                teacherId = r.IsDBNull(r.GetOrdinal("teacherId"))
-                    ? null
-                    : r.GetString("teacherId"),
-                schoolYear = r.GetString("schoolYear"),
-                semester = r.GetString("semester"),
-                term = r.GetString("term")
-            ));
+                    : reader.GetString("teacherId"),
+                schoolYear = reader.GetString("schoolYear"),
+                semester = reader.GetString("semester"),
+                term = reader.GetString("term")
+            });
         }
 
         return Ok(grades);
     }
 
-
     [HttpPost]
-    [Authorize(Roles = "admin, teacher")]
-    public async Task<IActionResult> Create(Input x, CancellationToken ct)
+    [Authorize(Roles = "admin,teacher")]
+    public async Task<IActionResult> Create(Input input, CancellationToken ct)
     {
-        var error = Check(x);
+        var error = Validate(input.StudentId, input.Subject, input.Score, input.Feedback);
         if (error is not null)
         {
             return BadRequest(new { message = error });
         }
 
-        await using var c = await db.OpenAsync(ct);
-        if (Role == "teacher" && !await Assigned(c, x.StudentId, ct))
+        await using var connection = await db.OpenAsync(ct);
+        if (Role == "teacher" &&
+            !await IsAssigned(connection, input.StudentId, input.Subject, ct))
         {
             return Forbid();
         }
 
-        const string sql = @"
+        const string sql = """
             INSERT INTO grades
                 (student_id, subject, score, feedback, teacher_id,
-                school_year, semester, term)
+                 school_year, semester, term)
             VALUES
-                (@stu, @sub, @score, @feedback, @teacher
-                @year, @sem, @term)";
-        
-        await using var q = Build(c, x, sql);
-        q.Parameters.AddWithValue
-        (
-            "@teacher",
-            Role == "teacher" ? UserID : DBNull.Value
-        );
-        await q.ExecuteNonQueryAsync(ct);
+                (@student, @subject, @score, @feedback, @teacher,
+                 @schoolYear, @semester, @term)
+            """;
 
-        return Created
-        (
-            "api/grades",
+        await using var command = Build(connection, input, sql);
+        command.Parameters.AddWithValue(
+            "@teacher",
+            Role == "teacher" ? UserId : DBNull.Value);
+        await command.ExecuteNonQueryAsync(ct);
+
+        return Created(
+            "/api/grades",
             new
             {
-                id = q.LastInsertedId,
-                studentId = x.StudentId,
-                subject = x.Subject,
-                score = x.Score,
-                feedback = x.Feedback,
-                teacherId = Role == "teacher" ? UserID : null,
-                schoolYear = x.SchoolYear,
-                semester = x.Semester,
-                term = x.Term
-            }
-        );
+                id = command.LastInsertedId,
+                studentId = input.StudentId,
+                subject = input.Subject.Trim(),
+                score = input.Score,
+                feedback = input.Feedback ?? "",
+                teacherId = Role == "teacher" ? UserId : null,
+                schoolYear = input.SchoolYear ?? "2025-2026",
+                semester = input.Semester ?? "1st Semester",
+                term = input.Term ?? "Prelim"
+            });
     }
 
-
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "admin, teacher")]
-    public async Task<IActionResult> Update 
-    (
-        int id,
-        Input x,
-        CancellationToken ct
-    )
+    [Authorize(Roles = "admin,teacher")]
+    public async Task<IActionResult> Update(int id, UpdateInput input, CancellationToken ct)
     {
         if (id <= 0)
         {
             return BadRequest();
         }
 
-        var error = Check (x);
-        if (error is not null)
+        await using var connection = await db.OpenAsync(ct);
+        string studentId;
+        string? teacherId;
+        await using (var findGrade = new MySqlCommand(
+            "SELECT student_id, teacher_id FROM grades WHERE id = @id",
+            connection))
         {
-            return BadRequest(new { message = error});
+            findGrade.Parameters.AddWithValue("@id", id);
+            await using var reader = await findGrade.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+            {
+                return NotFound(new { message = "Grade not found." });
+            }
+
+            studentId = reader.GetString("student_id");
+            teacherId = reader.IsDBNull(reader.GetOrdinal("teacher_id"))
+                ? null
+                : reader.GetString("teacher_id");
         }
 
-        await using var c = await db.OpenAsync(ct);
-        if (Role == "teacher" && !await Assigned(c, x.studentId, ct))
+        var error = Validate(studentId, input.Subject, input.Score, input.Feedback);
+        if (error is not null)
+        {
+            return BadRequest(new { message = error });
+        }
+
+        if (Role == "teacher" &&
+            (teacherId != UserId ||
+             !await IsAssigned(connection, studentId, input.Subject, ct)))
         {
             return Forbid();
         }
 
-        var sql = @"
+        var sql = """
             UPDATE grades
-            SET student_id = @stu, subject = @sub, score = @score,
-                feedback = @feedback, school_year = @year,
-                semester = @sem, term = @term
-            WHERE id = @id";
+            SET subject = @subject, score = @score,
+                feedback = @feedback, school_year = @schoolYear,
+                semester = @semester, term = @term
+            WHERE id = @id
+            """;
         if (Role == "teacher")
         {
             sql += " AND teacher_id = @teacher";
         }
 
-        await using var q = Build(c, x, sql);
-        q.Parameters.AddWithValue("@id", id);
+        await using var command = BuildUpdate(connection, input, sql);
+        command.Parameters.AddWithValue("@id", id);
         if (Role == "teacher")
         {
-            q.Parameters.AddWithValue("@teacher, UserId");
+            command.Parameters.AddWithValue("@teacher", UserId);
         }
 
-        return await q.ExecuteNonQueryAsync(ct) == 0
-            ? NotFound()
-            : NoContent();
+        await command.ExecuteNonQueryAsync(ct);
+        var updatedGrade = await ReadGrade(connection, id, ct);
+        return updatedGrade is null
+            ? NotFound(new { message = "Grade not found." })
+            : Ok(updatedGrade);
     }
 
-    
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = "admin, teacher")]
-    public async Task<IActionResult> Delete (int id, CancellationToken  ct)
+    [Authorize(Roles = "admin,teacher")]
+    public async Task<IActionResult> Delete(int id, CancellationToken ct)
     {
-        await using var c = await db.OpenAsync(ct);
         var sql = "DELETE FROM grades WHERE id = @id";
-        if(Role == "teacher")
-        {
-            sql += " AND teacher_id = @teacher"
-        }
-
-        await using var q = new MySqlCommand(sql, c);
-        a.Parameters.AddWithValue("@id", id);
         if (Role == "teacher")
         {
-            q.Parameters.AddWithValue("@teacher", UserId);
+            sql += " AND teacher_id = @teacher";
         }
 
-        return await q.ExecuteNonQueryAsync(ct) == 0
-            ? NotFound()
-            : Ok(new  { ok = true });
+        await using var connection = await db.OpenAsync(ct);
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", id);
+        if (Role == "teacher")
+        {
+            command.Parameters.AddWithValue("@teacher", UserId);
+        }
+
+        return await command.ExecuteNonQueryAsync(ct) == 0
+            ? NotFound(new { message = "Grade not found." })
+            : Ok(new { ok = true });
     }
 
-
-    private string? Check(Input x)
+    private string? Validate(
+        string studentId,
+        string subject,
+        decimal score,
+        string? feedback)
     {
-        if (string.IsNullOrWhiteSpace(x.StudentId) || string.IsNullOrWhiteSpace(x.Subject))
+        if (string.IsNullOrWhiteSpace(studentId) ||
+            string.IsNullOrWhiteSpace(subject))
         {
-            return "Student and Subject are required.";
+            return "Student and subject are required.";
         }
 
-        if (Role == "teacher" && (x.Score < 1m || x.Score > 5m))
+        if (Role == "teacher" && (score < 1m || score > 5m))
         {
             return "Teacher grade must be between 1.0 and 5.0.";
         }
 
-        if (Role == "admin" && (x.Score < 0m || x.Score > 100m))
+        if (Role == "admin" && (score < 0m || score > 100m))
         {
             return "Admin score must be between 0 and 100.";
         }
 
-        if(x.feedback?.Length > 2000)
+        if (feedback?.Length > 2000)
         {
             return "Feedback is too long.";
         }
@@ -236,39 +263,95 @@ public sealed class GradesController (DbConnectionFactory db) : ControllerBase
         return null;
     }
 
-    private async Task<bool> Assigned
-    (
-        MySqlConnection c,
-        string student,
-        CancellationToken ct
-    )
+    private async Task<bool> IsAssigned(
+        MySqlConnection connection,
+        string studentId,
+        string subject,
+        CancellationToken ct)
     {
-        const string sql = @"
-            SELECT COUNT (*) FROM teacher_assignments
-            WHERE teacher_id = @t AND student_id = @s";
-        
-        await using var q = new MySqlCommand(sql, c);
-        q.Parameters.AddWithValue("@t", UserID);
-        q.Parameters.AddWithValue("@s", student);
+        const string sql = """
+            SELECT COUNT(*)
+            FROM teacher_assignments
+            WHERE teacher_id = @teacher AND student_id = @student AND subject = @subject
+            """;
 
-        return Convert.ToInt32(await q.ExecuteScalarAsync(ct)) > 0;
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@teacher", UserId);
+        command.Parameters.AddWithValue("@student", studentId.Trim());
+        command.Parameters.AddWithValue("@subject", subject.Trim());
+        return Convert.ToInt32(await command.ExecuteScalarAsync(ct)) > 0;
     }
 
-    private static MySqlCommand Build
-    (
-        MySqlConnection c,
-        Input x,
-        string sql
-    )
+    private static MySqlCommand Build(
+        MySqlConnection connection,
+        Input input,
+        string sql)
     {
-        var q = new MySqlCommand(sql, c);
-        q.Parameters.AddWithValue("@stu", x.StudentId);
-        q.Parameters.AddWithValue("@sub", x.Subject.Trim());
-        q.Parameters.AddWithValue("@score", x.Score);
-        q.Parameters.AddWithValue("@feedback", x.Feedback ?? "");
-        q.Parameters.AddWithValue("@year", x.SchoolYear ?? "2025-2026");
-        q.Parameters.AddWithValue("@sem", x.Semester ?? "1st Semester");
-        q.Parameters.AddWithValue("@term", x.Term ?? "Prelim");
-        return q;
+        var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@student", input.StudentId.Trim());
+        command.Parameters.AddWithValue("@subject", input.Subject.Trim());
+        command.Parameters.AddWithValue("@score", input.Score);
+        command.Parameters.AddWithValue("@feedback", input.Feedback ?? "");
+        command.Parameters.AddWithValue("@schoolYear", input.SchoolYear ?? "2025-2026");
+        command.Parameters.AddWithValue("@semester", input.Semester ?? "1st Semester");
+        command.Parameters.AddWithValue("@term", input.Term ?? "Prelim");
+        return command;
+    }
+
+    private static MySqlCommand BuildUpdate(
+        MySqlConnection connection,
+        UpdateInput input,
+        string sql)
+    {
+        var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@subject", input.Subject.Trim());
+        command.Parameters.AddWithValue("@score", input.Score);
+        command.Parameters.AddWithValue("@feedback", input.Feedback ?? "");
+        command.Parameters.AddWithValue("@schoolYear", input.SchoolYear ?? "2025-2026");
+        command.Parameters.AddWithValue("@semester", input.Semester ?? "1st Semester");
+        command.Parameters.AddWithValue("@term", input.Term ?? "Prelim");
+        return command;
+    }
+
+    private static async Task<object?> ReadGrade(
+        MySqlConnection connection,
+        int id,
+        CancellationToken ct)
+    {
+        const string sql = """
+            SELECT g.id, g.student_id AS studentId,
+                   COALESCE(u.name, TRIM(CONCAT_WS(' ', u.firstname, u.lastname))) AS studentName,
+                   COALESCE(g.subject, '') AS subject, g.score,
+                   COALESCE(g.feedback, '') AS feedback,
+                   g.teacher_id AS teacherId,
+                   g.school_year AS schoolYear, g.semester, g.term
+            FROM grades g
+            JOIN users u ON u.id = g.student_id
+            WHERE g.id = @id
+            """;
+
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", id);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new
+        {
+            id = reader.GetInt32("id"),
+            studentId = reader.GetString("studentId"),
+            studentName = reader.GetString("studentName"),
+            subject = reader.GetString("subject"),
+            score = reader.GetDecimal("score"),
+            feedback = reader.GetString("feedback"),
+            teacherId = reader.IsDBNull(reader.GetOrdinal("teacherId"))
+                ? null
+                : reader.GetString("teacherId"),
+            schoolYear = reader.GetString("schoolYear"),
+            semester = reader.GetString("semester"),
+            term = reader.GetString("term")
+        };
     }
 }

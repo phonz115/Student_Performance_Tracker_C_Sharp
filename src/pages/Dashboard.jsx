@@ -41,7 +41,7 @@ const Dashboard = () => {
       if (!backup || typeof backup !== 'object' || Array.isArray(backup)) {
         throw new Error('Choose a valid ClassIQ JSON backup file.');
       }
-      if (!window.confirm('Restore this backup? It will replace the current system data.')) return;
+      if (!window.confirm('Restore this backup? Records in the backup will be added or updated; other data will remain.')) return;
 
       setIsWorking(true);
       const result = await restoreBackup(backup);

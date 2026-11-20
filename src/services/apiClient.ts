@@ -27,7 +27,10 @@ export const apiRequest = async <T>(path: string, options: RequestInit = {}): Pr
   const data: unknown = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data));
+    const message = response.status === 401 && data === null
+      ? 'Unauthorized'
+      : getErrorMessage(data);
+    throw new Error(message);
   }
 
   return data as T;
