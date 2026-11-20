@@ -3,7 +3,7 @@ import RoleLogin from './RoleLogin';
 const AdminLogin = () => (
   <RoleLogin
     role="admin"
-    headerTitle="Admin Login - Performance Tracker"
+    headerTitle="ClassIQ"
     title="Admin Login"
     subtitle="Access the administration panel"
     identifierLabel="Email Address"

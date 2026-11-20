@@ -805,7 +805,7 @@ const ManageUsers = () => {
             <div className="users-form-grid users-form-grid-two">
               <label>
                 <span>School Year</span>
-                <input name="schoolYear" placeholder="2025-2026" value={userForm.schoolYear} onChange={updateForm(setUserForm)} required />
+                <input name="schoolYear" placeholder="e.g. 2025-2026" value={userForm.schoolYear} onChange={updateForm(setUserForm)} required />
               </label>
               {!editingUserId && (
                 <label>
@@ -940,7 +940,7 @@ const ManageUsers = () => {
             <div className="course-modal-two-column">
               <label>
                 <span>School Year</span>
-                <input name="schoolYear" placeholder="2025-2026" value={courseForm.schoolYear} onChange={updateForm(setCourseForm)} />
+                <input name="schoolYear" placeholder="e.g. 2025-2026" value={courseForm.schoolYear} onChange={updateForm(setCourseForm)} />
               </label>
               <label>
                 <span>Teacher Lead</span>

@@ -339,9 +339,8 @@ const AddGrades = () => {
     <div className={user.role === 'teacher' ? 'grades-management-page teacher-grades-page' : 'grades-management-page'}>
       <header className="grades-management-header">
         <div>
-          <h1>{user.role === 'admin' ? 'All grades' : 'Teacher grades'}</h1>
+          <h1>{user.role === 'admin' ? 'All grades' : 'Teacher Gradebook'}</h1>
         </div>
-        <button type="button" className="grades-add-btn" onClick={openAddForm}>Add grade</button>
       </header>
 
       <section className="grades-filter-bar" aria-label="Grade filters">
@@ -463,11 +462,30 @@ const AddGrades = () => {
                             <strong>{grade ? formatGradeValue(grade) : '-'}</strong>
                             {mayEdit ? (
                               <div className="teacher-period-actions">
-                                <button type="button" onClick={() => (grade ? openEditForm(grade) : openAddForm(group, label))}>
-                                  {grade ? 'Edit' : 'Add'}
-                                </button>
-                                {grade && (
-                                  <button type="button" className="delete" onClick={() => handleDelete(grade)}>Delete</button>
+                                {grade ? (
+                                  <>
+                                    <button type="button" className="grade-icon-btn" aria-label={"Edit " + label + " grade for " + group.studentName} title={"Edit " + label + " grade for " + group.studentName} onClick={() => openEditForm(grade)}>
+                                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M12 20h9" />
+                                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                                      </svg>
+                                    </button>
+                                    <button type="button" className="grade-icon-btn delete" aria-label={"Delete " + label + " grade for " + group.studentName} title={"Delete " + label + " grade for " + group.studentName} onClick={() => handleDelete(grade)}>
+                                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M3 6h18" />
+                                        <path d="M8 6V4h8v2" />
+                                        <path d="M19 6l-1 15H6L5 6" />
+                                        <path d="M10 11v6M14 11v6" />
+                                      </svg>
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button type="button" className="grade-icon-btn add" aria-label={"Add " + label + " grade for " + group.studentName} title={"Add " + label + " grade for " + group.studentName} onClick={() => openAddForm(group, label)}>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <path d="M12 5v14" />
+                                      <path d="M5 12h14" />
+                                    </svg>
+                                  </button>
                                 )}
                               </div>
                             ) : <span>View only</span>}
@@ -511,8 +529,22 @@ const AddGrades = () => {
                       <td className="grade-row-actions">
                         {mayEdit ? (
                           <>
-                            <button type="button" onClick={() => openEditForm(grade)}>Edit</button>
-                            <button type="button" className="delete" onClick={() => handleDelete(grade)}>Delete</button>
+                            <span className="grade-action-cell">
+                              <button type="button" className="grade-icon-btn" aria-label={"Edit grade for " + (student?.name || grade.studentId)} title={"Edit grade for " + (student?.name || grade.studentId)} onClick={() => openEditForm(grade)}>
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M12 20h9" />
+                                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                                </svg>
+                              </button>
+                              <button type="button" className="grade-icon-btn delete" aria-label={"Delete grade for " + (student?.name || grade.studentId)} title={"Delete grade for " + (student?.name || grade.studentId)} onClick={() => handleDelete(grade)}>
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M3 6h18" />
+                                  <path d="M8 6V4h8v2" />
+                                  <path d="M19 6l-1 15H6L5 6" />
+                                  <path d="M10 11v6M14 11v6" />
+                                </svg>
+                              </button>
+                            </span>
                           </>
                         ) : <span>View only</span>}
                       </td>

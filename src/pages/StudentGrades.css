@@ -71,7 +71,7 @@
 }
 
 .student-grades-table th {
-  background: var(--surface-muted, #f2f4f7);
+  background: var(--primary, #315d9b);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
