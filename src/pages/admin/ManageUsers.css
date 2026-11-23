@@ -193,7 +193,6 @@
 .users-icon-btn svg,
 .course-create-btn svg,
 .course-search svg,
-.users-pagination svg,
 .users-modal-icon svg {
   width: 18px;
   height: 18px;
@@ -210,45 +209,8 @@
   text-align: center;
 }
 
-.users-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  color: var(--text-muted, #667085);
-  font-size: 13px;
-}
-
-.users-pagination > div {
-  display: flex;
-  gap: 5px;
-}
-
-.users-pagination button {
-  display: grid;
-  place-items: center;
-  min-width: 32px;
-  height: 32px;
-  border: 1px solid var(--border, #d0d5dd);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text, #344054);
-  cursor: pointer;
-}
-
-.users-pagination button.active {
-  border-color: var(--primary, #315d9b);
-  background: var(--primary, #315d9b);
-  color: #fff;
-}
-
-.users-pagination button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.course-filter-bar {
+.course-filter-bar,
+.users-filter-bar {
   margin-bottom: 16px;
 }
 
@@ -325,6 +287,33 @@
 .users-modal input,
 .users-modal select {
   width: 100%;
+}
+
+.users-modal input.generated-id-input {
+  border-color: var(--accent-border, #b8c8dc);
+  background: #eef4ff;
+  color: var(--primary, #315d9b);
+  font-weight: 700;
+  cursor: default;
+}
+
+.users-modal input.generated-id-input::placeholder {
+  color: var(--primary, #315d9b);
+  opacity: 0.7;
+}
+
+.users-modal input.generated-id-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(49, 93, 155, 0.14);
+}
+
+.users-modal input:not(.generated-id-input):-webkit-autofill,
+.users-modal input:not(.generated-id-input):-webkit-autofill:hover,
+.users-modal input:not(.generated-id-input):-webkit-autofill:focus {
+  background-color: #fff !important;
+  -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
+  -webkit-text-fill-color: var(--text-strong, #1d2939) !important;
+  caret-color: var(--text-strong, #1d2939);
 }
 
 .users-modal-icon,
@@ -491,10 +480,6 @@
     min-width: 650px;
   }
 
-  .users-pagination {
-    align-items: flex-start;
-    flex-direction: column;
-  }
 }
 
 @media (max-width: 520px) {

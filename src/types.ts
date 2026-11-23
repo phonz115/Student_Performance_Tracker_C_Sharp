@@ -75,6 +75,7 @@ export type Course = {
   schoolYear?: string;
   semester?: string;
   teacherId?: string | null;
+  createdAt?: string;
 };
 
 export type Subject = {

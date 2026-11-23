@@ -2,7 +2,7 @@ import type { AppUser, Course, Subject, TeacherAssignment } from '../types';
 import { apiPost, apiRequest } from './apiClient';
 
 export type UserPayload = {
-  id: string;
+  id?: string;
   name: string;
   email: string;
   role: AppUser['role'];
@@ -15,6 +15,8 @@ export type UserPayload = {
 export const createUser = (userData: UserPayload & { password: string }) => {
   return apiPost<AppUser, UserPayload & { password: string }>('/users', userData);
 };
+
+export const getNextUserId = () => apiRequest<{ id: string }>('/users/next-id');
 
 export const updateUser = (userId: string, userData: Omit<UserPayload, 'id' | 'password'>) => {
   return apiRequest<AppUser>(`/users/${encodeURIComponent(userId)}`, {

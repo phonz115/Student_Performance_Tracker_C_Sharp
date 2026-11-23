@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useStatusToast } from '../hooks/useNotifications';
 import { LoadingSpinner } from '../components/ui';
+import TablePagination from '../components/ui/TablePagination';
 import { exportStructuredPdf } from '../utils/pdfExport';
 import './StudentGrades.css';
 
@@ -10,6 +11,7 @@ const GRADE_TERMS = [
   { key: 'midterm', label: 'Midterm' },
   { key: 'finals', label: 'Finals' },
 ];
+const gradesPerPage = 10;
 
 const getGradeTermKey = (term) => {
   const normalizedTerm = String(term || '').trim().toLowerCase();
@@ -25,6 +27,7 @@ const StudentGrades = () => {
   const { user, grades } = useAuth();
   const [selectedSchoolYear, setSelectedSchoolYear] = useState('All');
   const [selectedSemester, setSelectedSemester] = useState('All');
+  const [currentPage, setCurrentPage] = useState(1);
   const [selectedFeedback, setSelectedFeedback] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [reportToast, setReportToast] = useState('');
@@ -81,6 +84,17 @@ const StudentGrades = () => {
     });
     return [...groups.values()];
   }, [visibleGrades]);
+  const totalPages = Math.max(1, Math.ceil(gradeGroups.length / gradesPerPage));
+  const pageOffset = (currentPage - 1) * gradesPerPage;
+  const pageGradeGroups = gradeGroups.slice(pageOffset, pageOffset + gradesPerPage);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedSchoolYear, selectedSemester]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const handleDownloadReport = () => {
     try {
@@ -161,7 +175,7 @@ const StudentGrades = () => {
             </tr>
           </thead>
           <tbody>
-            {gradeGroups.map((gradeGroup) => (
+            {pageGradeGroups.map((gradeGroup) => (
               <tr key={gradeGroup.id}>
                 <td>{gradeGroup.subject}</td>
                 <td>{gradeGroup.schoolYear}</td>
@@ -194,6 +208,13 @@ const StudentGrades = () => {
             )}
           </tbody>
         </table>
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={gradeGroups.length}
+          pageSize={gradesPerPage}
+          itemLabel="grade records"
+          onPageChange={setCurrentPage}
+        />
       </section>
 
       <dialog

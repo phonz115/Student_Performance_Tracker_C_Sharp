@@ -10,7 +10,7 @@ The React/Vite frontend uses the ASP.NET Core API and MySQL database.
 
 ## Local setup
 
-1. Create the database using `server/student_tracker.sql`. For an existing database, apply the schema additions for `users.course`, `users.school_year`, `users.semester`, and `password_reset_tokens` if they are missing.
+1. Create or update the database using `server/student_tracker.sql`. For an existing database, make sure `users.course`, `users.school_year`, `users.semester`, and `password_reset_tokens` exist; the script adds missing `is_deleted` columns to the application tables.
 2. In PowerShell, set the MySQL connection string for the current terminal. Replace the placeholders with your local database values; do not commit credentials.
 
    ```powershell

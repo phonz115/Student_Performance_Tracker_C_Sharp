@@ -1,12 +1,28 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.RateLimiting;
 using StudentTracker.Api.Infrastructure;
+using StudentTracker.Api.Repositories;
+using StudentTracker.Api.Services;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddSingleton<DbConnectionFactory>();
+builder.Services.AddScoped<AuthRepository>();
+builder.Services.AddScoped<BackupRepository>();
+builder.Services.AddScoped<CoursesRepository>();
+builder.Services.AddScoped<GradesRepository>();
+builder.Services.AddScoped<SubjectsRepository>();
+builder.Services.AddScoped<TeacherAssignmentsRepository>();
+builder.Services.AddScoped<UsersRepository>();
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<BackupService>();
+builder.Services.AddScoped<CoursesService>();
+builder.Services.AddScoped<GradesService>();
+builder.Services.AddScoped<SubjectsService>();
+builder.Services.AddScoped<TeacherAssignmentsService>();
+builder.Services.AddScoped<UsersService>();
 
 builder.Services.AddCors(options =>
 {
