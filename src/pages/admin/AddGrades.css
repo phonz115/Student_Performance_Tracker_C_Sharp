@@ -12,8 +12,8 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
-  max-width: 1200px;
-  margin: 0 auto 22px;
+  width: 100%;
+  margin: 0 0 22px;
 }
 
 .grades-management-header h1 {
@@ -68,8 +68,8 @@
 .grades-management-page .grades-table-card {
   width: 100%;
   box-sizing: border-box;
-  max-width: 1200px;
-  margin: 0 auto 16px;
+  max-width: none;
+  margin: 0 0 16px;
   border: 1px solid var(--border, #d0d5dd);
   border-radius: 9px;
   background: #fff;

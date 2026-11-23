@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useNotifications } from '../../hooks/useNotifications';
+import { getCurrentSchoolYear } from '../../utils/schoolYearOptions';
+import SchoolYearSelect from '../../components/ui/SchoolYearSelect';
+import TablePagination from '../../components/ui/TablePagination';
 import { getCourses } from '../../services/adminService';
 import './AddGrades.css';
 
@@ -9,6 +12,8 @@ const GRADE_TERMS = [
   { key: 'midterm', label: 'Midterm' },
   { key: 'finals', label: 'Finals' },
 ];
+const gradesPerPage = 10;
+const currentSchoolYear = getCurrentSchoolYear();
 
 const getGradeTermKey = (term) => {
   const normalizedTerm = String(term || '').trim().toLowerCase();
@@ -35,7 +40,7 @@ const emptyForm = {
   subject: '',
   score: '',
   feedback: '',
-  schoolYear: '2025-2026',
+  schoolYear: currentSchoolYear,
   semester: '1st Semester',
   term: 'Prelim',
 };
@@ -48,6 +53,7 @@ const AddGrades = () => {
   const students = useMemo(() => users.filter((account) => account.role === 'student'), [users]);
   const [courses, setCourses] = useState([]);
   const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [classFilter, setClassFilter] = useState('All');
   const [isClassMenuOpen, setIsClassMenuOpen] = useState(false);
   const classFilterContainerRef = useRef(null);
@@ -249,6 +255,19 @@ const AddGrades = () => {
       || left.semester.localeCompare(right.semester)
     ));
   }, [classFilter, search, schoolYearFilter, semesterFilter, students, teacherAssignments, user.id, user.role, visibleGrades]);
+  const tableRows = user.role === 'teacher' ? gradeGroups : visibleGrades;
+  const totalPages = Math.max(1, Math.ceil(tableRows.length / gradesPerPage));
+  const pageOffset = (currentPage - 1) * gradesPerPage;
+  const pageGradeGroups = gradeGroups.slice(pageOffset, pageOffset + gradesPerPage);
+  const pageVisibleGrades = visibleGrades.slice(pageOffset, pageOffset + gradesPerPage);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, classFilter, semesterFilter, schoolYearFilter]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
   const openAddForm = (group = null, period = 'Prelim') => {
     setEditingGrade(null);
     setForm({
@@ -446,7 +465,7 @@ const AddGrades = () => {
                 </tr>
               </thead>
               <tbody>
-                {gradeGroups.map((group) => (
+                {pageGradeGroups.map((group) => (
                   <tr key={group.id}>
                     <td>{group.studentName}</td>
                     <td>{group.subject}</td>
@@ -514,7 +533,7 @@ const AddGrades = () => {
                 </tr>
               </thead>
               <tbody>
-                {visibleGrades.map((grade) => {
+                {pageVisibleGrades.map((grade) => {
                   const student = students.find((account) => account.id === grade.studentId);
                   const mayEdit = user.role === 'admin' || grade.teacherId === user.id;
 
@@ -558,6 +577,13 @@ const AddGrades = () => {
             </>
           )}
         </table>
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={tableRows.length}
+          pageSize={gradesPerPage}
+          itemLabel={user.role === 'teacher' ? 'gradebook entries' : 'grade records'}
+          onPageChange={setCurrentPage}
+        />
       </section>
 
       {isModalOpen && (
@@ -602,7 +628,7 @@ const AddGrades = () => {
             <div className="add-grades-form-row">
               <label className="add-grades-field">
                 <span>School year</span>
-                <input value={form.schoolYear} onChange={(event) => setForm((current) => ({ ...current, schoolYear: event.target.value }))} required />
+                <SchoolYearSelect value={form.schoolYear} onChange={(event) => setForm((current) => ({ ...current, schoolYear: event.target.value }))} />
               </label>
               <label className="add-grades-field">
                 <span>Semester</span>

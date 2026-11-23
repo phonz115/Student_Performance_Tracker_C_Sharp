@@ -3,6 +3,9 @@ import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useStatusToast } from '../../hooks/useNotifications';
 import { formatName } from '../../utils/formatName';
+import { getCurrentSchoolYear } from '../../utils/schoolYearOptions';
+import SchoolYearSelect from '../../components/ui/SchoolYearSelect';
+import TablePagination from '../../components/ui/TablePagination';
 import {
   createCourse,
   createTeacherAssignment,
@@ -11,6 +14,7 @@ import {
   deleteTeacherAssignment,
   deleteUser,
   getCourses,
+  getNextUserId,
   getTeacherAssignments,
   resetUserPassword,
   updateCourse,
@@ -18,6 +22,7 @@ import {
 } from '../../services/adminService';
 import './ManageUsers.css';
 
+const currentSchoolYear = getCurrentSchoolYear();
 const emptyUserForm = {
   id: '',
   firstName: '',
@@ -27,17 +32,19 @@ const emptyUserForm = {
   role: 'student',
   course: 'BSIT',
   semester: '1st Semester',
-  schoolYear: '2025-2026',
+  schoolYear: currentSchoolYear,
   password: '',
 };
 const emptyResetPasswordForm = { password: '', confirmPassword: '' };
-const emptyCourseForm = { code: '', name: '', description: '', semester: '1st Semester', schoolYear: '2025-2026', teacherId: '' };
+const emptyCourseForm = { code: '', name: '', description: '', semester: '1st Semester', schoolYear: currentSchoolYear, teacherId: '' };
 const studentProgramOptions = ['BSIT', 'BSCS', 'BSEMC'];
-const usersPerPage = 4;
-const coursesPerPage = 5;
+const usersPerPage = 10;
+const coursesPerPage = 10;
 
 const roleLabel = (role = '') => role.charAt(0).toUpperCase() + role.slice(1);
 const rolePluralLabel = (role = '') => ({ teacher: 'Teachers', student: 'Students', admin: 'Admins' }[role] || 'Users');
+const getUserFirstName = (account) => String(account.firstName || account.name || '').trim().split(/\s+/)[0] || '';
+const getUserLastName = (account) => String(account.lastName || account.name || '').trim().split(/\s+/).slice(1).join(' ');
 
 const splitName = (name = '') => {
   const parts = formatName(name).split(' ').filter(Boolean);
@@ -114,7 +121,14 @@ const CourseCatalog = ({
     return courses.map((course) => ({
       ...course,
       teacherName: course.teacherId ? teacherMap.get(course.teacherId) || course.teacherId : 'Unassigned',
-    }));
+    })).sort((left, right) => {
+      const leftCreatedAt = Date.parse(left.createdAt || '');
+      const rightCreatedAt = Date.parse(right.createdAt || '');
+      if (Number.isFinite(leftCreatedAt) && Number.isFinite(rightCreatedAt) && leftCreatedAt !== rightCreatedAt) {
+        return rightCreatedAt - leftCreatedAt;
+      }
+      return Number(right.id || 0) - Number(left.id || 0);
+    });
   }, [courses, teacherMap]);
   const filteredCourses = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -127,10 +141,7 @@ const CourseCatalog = ({
       return matchesQuery;
     });
   }, [courseRows, searchQuery]);
-  const totalPages = Math.max(1, Math.ceil(filteredCourses.length / coursesPerPage));
   const pageCourses = filteredCourses.slice((currentPage - 1) * coursesPerPage, currentPage * coursesPerPage);
-  const pageStart = filteredCourses.length === 0 ? 0 : (currentPage - 1) * coursesPerPage + 1;
-  const pageEnd = Math.min(currentPage * coursesPerPage, filteredCourses.length);
 
   return (
     <section id="courses" className="course-catalog-panel">
@@ -210,26 +221,7 @@ const CourseCatalog = ({
           </tbody>
         </table>
 
-        <div className="users-pagination">
-          <span>Showing {pageStart} to {pageEnd} of {filteredCourses.length} courses</span>
-          <div>
-            <button type="button" aria-label="Previous page" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1}>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m15 18-6-6 6-6" />
-              </svg>
-            </button>
-            {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
-              <button key={page} type="button" className={page === currentPage ? 'active' : ''} onClick={() => setCurrentPage(page)}>
-                {page}
-              </button>
-            ))}
-            <button type="button" aria-label="Next page" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={currentPage === totalPages}>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-            </button>
-          </div>
-        </div>
+        <TablePagination currentPage={currentPage} totalItems={filteredCourses.length} pageSize={coursesPerPage} itemLabel="courses" onPageChange={setCurrentPage} />
       </div>
     </section>
   );
@@ -251,6 +243,7 @@ const ManageUsers = () => {
   const { users, reloadData } = useAuth();
   const location = useLocation();
   const [userForm, setUserForm] = useState(emptyUserForm);
+  const [generatedUserId, setGeneratedUserId] = useState('');
   const [editingUserId, setEditingUserId] = useState('');
   const [selectedCourseIds, setSelectedCourseIds] = useState([]);
   const [editingCourseId, setEditingCourseId] = useState('');
@@ -260,6 +253,7 @@ const ManageUsers = () => {
   const [resetPasswordError, setResetPasswordError] = useState('');
   const [isCourseFormOpen, setIsCourseFormOpen] = useState(false);
   const [roleFilter, setRoleFilter] = useState('all');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [courseSearchQuery, setCourseSearchQuery] = useState('');
   const [courseCurrentPage, setCourseCurrentPage] = useState(1);
@@ -277,12 +271,33 @@ const ManageUsers = () => {
   const roleFromHash = ({ '#teachers': 'teacher', '#students': 'student', '#admins': 'admin' })[location.hash] || null;
   const displayedRole = roleFromHash || roleFilter;
   const filteredUsers = useMemo(() => {
-    return users.filter((account) => displayedRole === 'all' || account.role === displayedRole);
-  }, [displayedRole, users]);
-  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / usersPerPage));
+    const query = userSearchQuery.trim().toLowerCase();
+    return users.filter((account) => {
+      const matchesRole = displayedRole === 'all' || account.role === displayedRole;
+      const searchableValues = [
+        account.id,
+        account.name,
+        account.firstName,
+        account.lastName,
+        account.email,
+        account.role,
+        account.course,
+        account.schoolYear,
+      ];
+      const matchesQuery = !query || searchableValues
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query));
+      return matchesRole && matchesQuery;
+    }).sort((left, right) => (
+      getUserFirstName(left).localeCompare(getUserFirstName(right), undefined, { sensitivity: 'base' })
+      || getUserLastName(left).localeCompare(getUserLastName(right), undefined, { sensitivity: 'base' })
+      || String(left.id).localeCompare(String(right.id), undefined, { numeric: true, sensitivity: 'base' })
+    ));
+  }, [displayedRole, userSearchQuery, users]);
   const pageUsers = filteredUsers.slice((currentPage - 1) * usersPerPage, currentPage * usersPerPage);
   const editingUser = editingUserId ? users.find((account) => account.id === editingUserId) : null;
   const programOptions = studentProgramOptions;
+  const userIdIsGenerated = userForm.role === 'student' || userForm.role === 'teacher';
   const assignableCourses = courses.filter((course) => course.id);
   const activeAdminView = location.hash === '#courses' ? 'courses' : 'users';
 
@@ -312,8 +327,23 @@ const ManageUsers = () => {
   }, [location.hash]);
 
   useEffect(() => {
+    let isActive = true;
+    getNextUserId()
+      .then(({ id }) => {
+        if (isActive) setGeneratedUserId(id);
+      })
+      .catch((error) => {
+        if (isActive) setErrorMessage(error instanceof Error ? error.message : 'Could not generate an ID number.');
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [users.length]);
+
+  useEffect(() => {
     setCurrentPage(1);
-  }, [roleFilter, users.length]);
+  }, [roleFilter, userSearchQuery, users.length]);
 
   useEffect(() => {
     setCourseCurrentPage(1);
@@ -348,6 +378,14 @@ const ManageUsers = () => {
       setSuccessMessage(success);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Admin action failed.');
+      if (isUserFormOpen && !editingUserId && userIdIsGenerated) {
+        try {
+          const { id } = await getNextUserId();
+          setGeneratedUserId(id);
+        } catch {
+          setGeneratedUserId('');
+        }
+      }
     } finally {
       setIsSaving(false);
     }
@@ -414,6 +452,7 @@ const ManageUsers = () => {
     event.preventDefault();
     const userPayload = {
       ...userForm,
+      id: userIdIsGenerated && !editingUserId ? generatedUserId : userForm.id,
       name: composeName(userForm),
       email: userForm.email || `${userForm.id || userForm.firstName || 'user'}@classiq.local`.toLowerCase().replace(/\s+/g, ''),
       course: ['student', 'teacher'].includes(userForm.role) ? userForm.course : '',
@@ -588,9 +627,6 @@ const ManageUsers = () => {
     setter((currentForm) => ({ ...currentForm, [name]: value }));
   };
 
-  const pageStart = filteredUsers.length === 0 ? 0 : (currentPage - 1) * usersPerPage + 1;
-  const pageEnd = Math.min(currentPage * usersPerPage, filteredUsers.length);
-
   return (
     <div className="manage-users-page">
       {activeAdminView === 'courses' && (
@@ -625,6 +661,22 @@ const ManageUsers = () => {
                 + Add {displayedRole === 'all' ? 'User' : roleLabel(displayedRole)}
               </button>
             </div>
+          </div>
+
+          <div className="users-filter-bar">
+            <label className="course-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m21 21-4.35-4.35" />
+                <circle cx="11" cy="11" r="7" />
+              </svg>
+              <input
+                type="search"
+                aria-label="Search users"
+                placeholder="Filter by name, ID, or email..."
+                value={userSearchQuery}
+                onChange={(event) => setUserSearchQuery(event.target.value)}
+              />
+            </label>
           </div>
 
           <div className="users-table-card">
@@ -720,26 +772,13 @@ const ManageUsers = () => {
               </tbody>
             </table>
 
-            <div className="users-pagination">
-              <span>Showing {pageStart} to {pageEnd} of {filteredUsers.length} {displayedRole === 'all' ? 'entries' : rolePluralLabel(displayedRole).toLowerCase()}</span>
-              <div>
-                <button type="button" aria-label="Previous page" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1}>
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="m15 18-6-6 6-6" />
-                  </svg>
-                </button>
-                {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
-                  <button key={page} type="button" className={page === currentPage ? 'active' : ''} onClick={() => setCurrentPage(page)}>
-                    {page}
-                  </button>
-                ))}
-                <button type="button" aria-label="Next page" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={currentPage === totalPages}>
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
-                </button>
-              </div>
-            </div>
+            <TablePagination
+              currentPage={currentPage}
+              totalItems={filteredUsers.length}
+              pageSize={usersPerPage}
+              itemLabel={displayedRole === 'all' ? 'entries' : rolePluralLabel(displayedRole).toLowerCase()}
+              onPageChange={setCurrentPage}
+            />
           </div>
         </section>
       )}
@@ -762,9 +801,15 @@ const ManageUsers = () => {
                 <input name="email" type="email" placeholder="e.g. user@classiq.local" value={userForm.email} onChange={updateForm(setUserForm)} autoComplete="email" required />
               </label>
               <label>
-                <span>ID Number</span>
-                {editingUserId ? (
-                  <input value={editingUserId} readOnly aria-label="ID Number" />
+                <span>{userIdIsGenerated && !editingUserId ? 'ID Number (Auto-generated)' : 'ID Number'}</span>
+                {editingUserId || userIdIsGenerated ? (
+                  <input
+                    className={userIdIsGenerated && !editingUserId ? 'generated-id-input' : undefined}
+                    value={editingUserId || generatedUserId}
+                    readOnly
+                    aria-label="ID Number"
+                    placeholder={userIdIsGenerated && !editingUserId ? 'Loading ID...' : undefined}
+                  />
                 ) : (
                   <input name="id" type="text" inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} title="Enter exactly 6 digits." placeholder="e.g. 123456" value={userForm.id} onChange={updateForm(setUserForm)} autoComplete="off" required />
                 )}
@@ -774,18 +819,22 @@ const ManageUsers = () => {
             <div className="users-form-grid">
               <label>
                 <span>First Name</span>
-                <input name="firstName" placeholder="e.g. Jer Erick" value={userForm.firstName} onChange={updateForm(setUserForm)} autoComplete="given-name" required />
+                <input name="firstName" placeholder="e.g. Juan" value={userForm.firstName} onChange={updateForm(setUserForm)} autoComplete="given-name" required />
               </label>
               <label>
                 <span>Last Name</span>
-                <input name="lastName" placeholder="e.g. Dumalagan" value={userForm.lastName} onChange={updateForm(setUserForm)} autoComplete="family-name" required />
+                <input name="lastName" placeholder="e.g. Dela Cruz" value={userForm.lastName} onChange={updateForm(setUserForm)} autoComplete="family-name" required />
               </label>
             </div>
 
             {(editingUserId || (!roleFromHash && roleFilter === 'all')) && (
               <label>
                 <span>Role</span>
-                <select name="role" value={userForm.role} onChange={updateForm(setUserForm)}>
+                <select name="role" value={userForm.role} onChange={(event) => setUserForm((current) => ({
+                  ...current,
+                  role: event.target.value,
+                  id: !editingUserId && ['student', 'teacher'].includes(event.target.value) ? '' : current.id,
+                }))}>
                   <option value="student">Student</option>
                   <option value="teacher">Teacher</option>
                   <option value="admin">Admin</option>
@@ -805,7 +854,7 @@ const ManageUsers = () => {
             <div className="users-form-grid users-form-grid-two">
               <label>
                 <span>School Year</span>
-                <input name="schoolYear" placeholder="e.g. 2025-2026" value={userForm.schoolYear} onChange={updateForm(setUserForm)} required />
+                <SchoolYearSelect name="schoolYear" value={userForm.schoolYear} onChange={updateForm(setUserForm)} />
               </label>
               {!editingUserId && (
                 <label>
@@ -870,7 +919,7 @@ const ManageUsers = () => {
 
             <div className="users-modal-actions">
               <button type="button" className="admin-tool-secondary" onClick={closeUserForm} disabled={isSaving}>Cancel</button>
-              <button type="submit" className="users-primary-btn" disabled={isSaving}>{editingUserId ? 'Save Changes' : `Add ${roleLabel(userForm.role)}`}</button>
+              <button type="submit" className="users-primary-btn" disabled={isSaving || (userIdIsGenerated && !editingUserId && !generatedUserId)}>{editingUserId ? 'Save Changes' : `Add ${roleLabel(userForm.role)}`}</button>
             </div>
           </form>
         </div>
@@ -940,7 +989,7 @@ const ManageUsers = () => {
             <div className="course-modal-two-column">
               <label>
                 <span>School Year</span>
-                <input name="schoolYear" placeholder="e.g. 2025-2026" value={courseForm.schoolYear} onChange={updateForm(setCourseForm)} />
+                <SchoolYearSelect name="schoolYear" value={courseForm.schoolYear} onChange={updateForm(setCourseForm)} />
               </label>
               <label>
                 <span>Teacher Lead</span>

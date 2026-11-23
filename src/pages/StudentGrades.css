@@ -207,7 +207,7 @@
 
 .grades-empty {
   padding: 36px 16px !important;
-  color: var(--text-strong, #1d2939) !important;
+  color: var(--text-muted, #667085) !important;
   text-align: center;
 }
 
